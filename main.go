@@ -56,6 +56,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	httpSrv.Shutdown(ctx)
+	srv.Close()
 
 	log.Println("[INFO] FlickMind stopped")
 }

@@ -231,11 +231,10 @@ func (s *Server) handleCatalog(c *gin.Context) {
 
 	cacheKey := fmt.Sprintf("%s:%s:%s", userID, catalogID, mediaType)
 
-	if cached, ok := s.cache.Get(cacheKey); ok {
-		if resp, ok := cached.(stremio.CatalogResponse); ok {
-			c.JSON(200, resp)
-			return
-		}
+	var cached stremio.CatalogResponse
+	if s.cache.Get(cacheKey, &cached) {
+		c.JSON(200, cached)
+		return
 	}
 
 	cfg, err := s.store.GetUserConfig(c.Request.Context(), userID)

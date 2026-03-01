@@ -27,7 +27,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 		cfg:        cfg,
 		store:      store.New(pool),
 		tmdbClient: tmdb.NewClient(cfg.TMDBAPIKey),
-		cache:      cache.New(),
+		cache:      cache.New(cfg.RedisURL),
 	}
 
 	if cfg.TraktClientID != "" && cfg.TraktClientSecret != "" {
@@ -64,6 +64,10 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 
 func (s *Server) Router() *gin.Engine {
 	return s.router
+}
+
+func (s *Server) Close() {
+	s.cache.Close()
 }
 
 func corsMiddleware() gin.HandlerFunc {

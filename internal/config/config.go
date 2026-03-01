@@ -7,6 +7,7 @@ type Config struct {
 	BaseURL           string
 	FrontendURL       string
 	DatabaseURL       string
+	RedisURL          string
 	TMDBAPIKey        string
 	TraktClientID     string
 	TraktClientSecret string
@@ -18,6 +19,7 @@ func Load() *Config {
 		BaseURL:           getEnv("BASE_URL", "http://localhost:7000"),
 		FrontendURL:       getEnv("FRONTEND_URL", "http://localhost:3000"),
 		DatabaseURL:       getEnv("DATABASE_URL", "postgres://flickmind:flickmind@localhost:5432/flickmind?sslmode=disable"),
+		RedisURL:          os.Getenv("REDIS_URL"),
 		TMDBAPIKey:        os.Getenv("TMDB_API_KEY"),
 		TraktClientID:     os.Getenv("TRAKT_CLIENT_ID"),
 		TraktClientSecret: os.Getenv("TRAKT_CLIENT_SECRET"),
