@@ -56,7 +56,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 
 	// Stremio endpoints
 	router.GET("/:userId/manifest.json", s.handleManifest)
-	router.GET("/:userId/catalog/:type/:id.json", s.handleCatalog)
+	router.GET("/:userId/catalog/:type/:id", s.handleCatalog)
 
 	s.router = router
 	return s
