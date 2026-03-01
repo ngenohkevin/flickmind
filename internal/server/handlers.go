@@ -233,15 +233,19 @@ func (s *Server) handleCatalog(c *gin.Context) {
 
 	var cached stremio.CatalogResponse
 	if s.cache.Get(cacheKey, &cached) {
+		log.Printf("[Catalog] Cache HIT for %s (%d metas)", cacheKey, len(cached.Metas))
 		c.JSON(200, cached)
 		return
 	}
+	log.Printf("[Catalog] Cache MISS for %s, fetching...", cacheKey)
 
 	cfg, err := s.store.GetUserConfig(c.Request.Context(), userID)
 	if err != nil {
+		log.Printf("[Catalog] User config not found: %s", userID)
 		c.JSON(200, stremio.CatalogResponse{Metas: []stremio.Meta{}})
 		return
 	}
+	log.Printf("[Catalog] User %s has %d providers configured", userID, len(s.buildProviderChain(cfg)))
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
@@ -259,6 +263,8 @@ func (s *Server) handleCatalog(c *gin.Context) {
 		c.JSON(200, stremio.CatalogResponse{Metas: []stremio.Meta{}})
 		return
 	}
+
+	log.Printf("[Catalog] Got %d metas for %s", len(metas), cacheKey)
 
 	resp := stremio.CatalogResponse{Metas: metas}
 
