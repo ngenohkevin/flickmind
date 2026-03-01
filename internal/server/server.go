@@ -13,7 +13,7 @@ import (
 
 type Server struct {
 	cfg         *config.Config
-	store       *store.Store
+	store       store.StoreInterface
 	tmdbClient  *tmdb.Client
 	traktClient *trakt.Client
 	cache       *cache.Cache
@@ -34,6 +34,26 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 		s.traktClient = trakt.NewClient(cfg.TraktClientID, cfg.TraktClientSecret)
 	}
 
+	s.router = s.setupRouter()
+	return s
+}
+
+func NewForTest(cfg *config.Config, st store.StoreInterface, tmdbClient *tmdb.Client, traktClient *trakt.Client, c *cache.Cache) *Server {
+	gin.SetMode(gin.TestMode)
+
+	s := &Server{
+		cfg:         cfg,
+		store:       st,
+		tmdbClient:  tmdbClient,
+		traktClient: traktClient,
+		cache:       c,
+	}
+
+	s.router = s.setupRouter()
+	return s
+}
+
+func (s *Server) setupRouter() *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{
@@ -57,9 +77,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 	// Stremio endpoints
 	router.GET("/:userId/manifest.json", s.handleManifest)
 	router.GET("/:userId/catalog/:type/:id", s.handleCatalog)
+	router.GET("/:userId/configure", s.handleConfigureRedirect)
 
-	s.router = router
-	return s
+	return router
 }
 
 func (s *Server) Router() *gin.Engine {

@@ -225,6 +225,13 @@ func (s *Server) handleTraktDisconnect(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
+// Stremio Configure Redirect
+
+func (s *Server) handleConfigureRedirect(c *gin.Context) {
+	userID := c.Param("userId")
+	c.Redirect(302, fmt.Sprintf("%s/configure/%s", s.cfg.FrontendURL, userID))
+}
+
 // Stremio Manifest
 
 func (s *Server) handleManifest(c *gin.Context) {
