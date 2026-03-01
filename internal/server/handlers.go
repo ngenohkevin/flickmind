@@ -227,7 +227,9 @@ func (s *Server) handleCatalog(c *gin.Context) {
 	mediaType := c.Param("type")
 	catalogID := c.Param("id")
 
+	log.Printf("[Catalog] Raw params: userId=%q type=%q id=%q", userID, mediaType, catalogID)
 	catalogID = strings.TrimSuffix(catalogID, ".json")
+	log.Printf("[Catalog] After trim: catalogID=%q", catalogID)
 
 	cacheKey := fmt.Sprintf("%s:%s:%s", userID, catalogID, mediaType)
 
