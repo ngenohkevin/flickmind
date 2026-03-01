@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ngenohkevin/flickmind/internal/ai"
-	"github.com/ngenohkevin/flickmind/internal/stremio"
 	"github.com/ngenohkevin/flickmind/internal/store"
+	"github.com/ngenohkevin/flickmind/internal/stremio"
 	"github.com/ngenohkevin/flickmind/internal/tmdb"
 	"github.com/ngenohkevin/flickmind/internal/trakt"
 )
@@ -34,6 +34,9 @@ type configRequest struct {
 	Language     string   `json:"language"`
 	Mood         string   `json:"mood"`
 	MinRating    float64  `json:"minRating"`
+	YearFrom     int      `json:"yearFrom"`
+	YearTo       int      `json:"yearTo"`
+	MaxResults   int      `json:"maxResults"`
 }
 
 func (s *Server) handleCreateConfig(c *gin.Context) {
@@ -51,6 +54,11 @@ func (s *Server) handleCreateConfig(c *gin.Context) {
 		return
 	}
 
+	maxResults := req.MaxResults
+	if maxResults <= 0 {
+		maxResults = 25
+	}
+
 	cfg := &store.UserConfig{
 		UserID:       userID,
 		GroqKey:      req.GroqKey,
@@ -61,6 +69,9 @@ func (s *Server) handleCreateConfig(c *gin.Context) {
 		Language:     req.Language,
 		Mood:         req.Mood,
 		MinRating:    req.MinRating,
+		YearFrom:     req.YearFrom,
+		YearTo:       req.YearTo,
+		MaxResults:   maxResults,
 	}
 
 	if err := s.store.SaveUserConfig(c.Request.Context(), cfg); err != nil {
@@ -96,6 +107,9 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 		"language":       cfg.Language,
 		"mood":           cfg.Mood,
 		"minRating":      cfg.MinRating,
+		"yearFrom":       cfg.YearFrom,
+		"yearTo":         cfg.YearTo,
+		"maxResults":     cfg.MaxResults,
 		"hasTrakt":       s.cfg.TraktClientID != "",
 	})
 }
@@ -137,6 +151,11 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 	existing.Language = req.Language
 	existing.Mood = req.Mood
 	existing.MinRating = req.MinRating
+	existing.YearFrom = req.YearFrom
+	existing.YearTo = req.YearTo
+	if req.MaxResults > 0 {
+		existing.MaxResults = req.MaxResults
+	}
 
 	if err := s.store.SaveUserConfig(c.Request.Context(), existing); err != nil {
 		log.Printf("[ERROR] Update config: %v", err)
@@ -277,20 +296,20 @@ func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaTyp
 		watchHistory = s.fetchWatchHistory(ctx, cfg)
 	}
 
-	prompt := ai.BuildAIPicksPrompt(cfg, watchHistory)
+	prompt := ai.BuildAIPicksPrompt(cfg, watchHistory, mediaType)
 	providers := s.buildProviderChain(cfg)
 
 	if len(providers) > 0 {
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return filterByType(enriched, mediaType)
+			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
 		}
 		log.Printf("[AI Picks] AI failed: %v, falling back to TMDB", err)
 	}
 
-	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating)
-	return filterByType(results, mediaType)
+	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
+	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
 }
 
 func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -299,20 +318,20 @@ func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, media
 		watchHistory = s.fetchWatchHistory(ctx, cfg)
 	}
 
-	prompt := ai.BuildHiddenGemsPrompt(cfg, watchHistory)
+	prompt := ai.BuildHiddenGemsPrompt(cfg, watchHistory, mediaType)
 	providers := s.buildProviderChain(cfg)
 
 	if len(providers) > 0 {
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return filterByType(enriched, mediaType)
+			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
 		}
 		log.Printf("[Hidden Gems] AI failed: %v, falling back to TMDB", err)
 	}
 
-	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, 7.0)
-	return filterByType(results, mediaType)
+	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, 7.0, cfg.YearFrom, cfg.YearTo)
+	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
 }
 
 func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -325,14 +344,14 @@ func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig
 		return nil
 	}
 
-	prompt := ai.BuildBecauseYouWatchedPrompt(watchHistory[0], cfg)
+	prompt := ai.BuildBecauseYouWatchedPrompt(watchHistory[0], cfg, mediaType)
 	providers := s.buildProviderChain(cfg)
 
 	if len(providers) > 0 {
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return filterByType(enriched, mediaType)
+			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
 		}
 		log.Printf("[Because You Watched] AI failed: %v", err)
 	}
@@ -399,6 +418,13 @@ func filterByType(results []tmdb.SearchResult, mediaType string) []stremio.Meta 
 	}
 	if metas == nil {
 		metas = []stremio.Meta{}
+	}
+	return metas
+}
+
+func limitResults(metas []stremio.Meta, max int) []stremio.Meta {
+	if max > 0 && len(metas) > max {
+		return metas[:max]
 	}
 	return metas
 }

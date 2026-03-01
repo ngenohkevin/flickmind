@@ -7,9 +7,17 @@ import (
 	"github.com/ngenohkevin/flickmind/internal/store"
 )
 
-const systemPrompt = `You are FlickMind, an expert movie and TV recommendation engine.
+func buildSystemPrompt(maxResults int, mediaType string) string {
+	typeInstruction := "movies or TV shows"
+	if mediaType == "movie" {
+		typeInstruction = "movies only (no TV series)"
+	} else if mediaType == "series" {
+		typeInstruction = "TV series only (no movies)"
+	}
 
-TASK: Given the user's preferences, recommend up to 15 titles (movies or TV shows).
+	return fmt.Sprintf(`You are FlickMind, an expert movie and TV recommendation engine.
+
+TASK: Given the user's preferences, recommend exactly %d titles (%s).
 
 CONTENT TYPES:
 - movie: Feature films
@@ -18,13 +26,13 @@ CONTENT TYPES:
 
 RULES:
 1. Only recommend real, existing titles
-2. Mix content types unless user specifies otherwise
-3. Prioritize content from 1990-present unless asked for classics
-4. Diversify recommendations (different directors, studios, countries)
-5. Match the MOOD and TONE, not just plot keywords
-6. For anime requests, prefer highly-rated series
-7. Consider both popular and lesser-known titles for variety
-8. Never include unreleased or upcoming titles
+2. Prioritize content from 1990-present unless asked for classics
+3. Diversify recommendations (different directors, studios, countries)
+4. Match the MOOD and TONE, not just plot keywords
+5. For anime requests, prefer highly-rated series
+6. Consider both popular and lesser-known titles for variety
+7. Never include unreleased or upcoming titles
+8. Return exactly %d results
 
 OUTPUT FORMAT (strict JSON array, no markdown, no explanation):
 [
@@ -36,11 +44,23 @@ OUTPUT FORMAT (strict JSON array, no markdown, no explanation):
   }
 ]
 
-IMPORTANT: Return ONLY the JSON array. No markdown code blocks, no additional text.`
+IMPORTANT: Return ONLY the JSON array. No markdown code blocks, no additional text.`, maxResults, typeInstruction, maxResults)
+}
 
-func BuildAIPicksPrompt(cfg *store.UserConfig, watchHistory []string) string {
+func appendYearRange(parts []string, cfg *store.UserConfig) []string {
+	if cfg.YearFrom > 0 && cfg.YearTo > 0 {
+		parts = append(parts, fmt.Sprintf("YEAR RANGE: %d-%d", cfg.YearFrom, cfg.YearTo))
+	} else if cfg.YearFrom > 0 {
+		parts = append(parts, fmt.Sprintf("YEAR RANGE: %d-present", cfg.YearFrom))
+	} else if cfg.YearTo > 0 {
+		parts = append(parts, fmt.Sprintf("YEAR RANGE: up to %d", cfg.YearTo))
+	}
+	return parts
+}
+
+func BuildAIPicksPrompt(cfg *store.UserConfig, watchHistory []string, mediaType string) string {
 	var parts []string
-	parts = append(parts, systemPrompt)
+	parts = append(parts, buildSystemPrompt(cfg.MaxResults, mediaType))
 
 	if len(cfg.Genres) > 0 {
 		parts = append(parts, fmt.Sprintf("\nPREFERRED GENRES: %s", strings.Join(cfg.Genres, ", ")))
@@ -57,6 +77,7 @@ func BuildAIPicksPrompt(cfg *store.UserConfig, watchHistory []string) string {
 	if len(cfg.ContentTypes) > 0 {
 		parts = append(parts, fmt.Sprintf("CONTENT TYPES: %s only", strings.Join(cfg.ContentTypes, ", ")))
 	}
+	parts = appendYearRange(parts, cfg)
 
 	if len(watchHistory) > 0 {
 		parts = append(parts, fmt.Sprintf("\nRECENTLY WATCHED (exclude these): %s", strings.Join(watchHistory, ", ")))
@@ -68,9 +89,9 @@ func BuildAIPicksPrompt(cfg *store.UserConfig, watchHistory []string) string {
 	return strings.Join(parts, "\n")
 }
 
-func BuildHiddenGemsPrompt(cfg *store.UserConfig, watchHistory []string) string {
+func BuildHiddenGemsPrompt(cfg *store.UserConfig, watchHistory []string, mediaType string) string {
 	var parts []string
-	parts = append(parts, systemPrompt)
+	parts = append(parts, buildSystemPrompt(cfg.MaxResults, mediaType))
 	parts = append(parts, "\nSPECIAL FOCUS: Hidden Gems — underrated, lesser-known quality titles.")
 	parts = append(parts, "Prioritize: vote count < 5000, rating >= 7.0, critically acclaimed but not mainstream.")
 	parts = append(parts, "Avoid: blockbusters, franchise films, widely-known titles.")
@@ -87,6 +108,7 @@ func BuildHiddenGemsPrompt(cfg *store.UserConfig, watchHistory []string) string 
 	if len(cfg.ContentTypes) > 0 {
 		parts = append(parts, fmt.Sprintf("CONTENT TYPES: %s only", strings.Join(cfg.ContentTypes, ", ")))
 	}
+	parts = appendYearRange(parts, cfg)
 
 	if len(watchHistory) > 0 {
 		parts = append(parts, fmt.Sprintf("\nALREADY WATCHED (exclude): %s", strings.Join(watchHistory, ", ")))
@@ -95,16 +117,17 @@ func BuildHiddenGemsPrompt(cfg *store.UserConfig, watchHistory []string) string 
 	return strings.Join(parts, "\n")
 }
 
-func BuildBecauseYouWatchedPrompt(recentTitle string, cfg *store.UserConfig) string {
+func BuildBecauseYouWatchedPrompt(recentTitle string, cfg *store.UserConfig, mediaType string) string {
 	var parts []string
-	parts = append(parts, systemPrompt)
+	parts = append(parts, buildSystemPrompt(cfg.MaxResults, mediaType))
 	parts = append(parts, fmt.Sprintf("\nThe user just watched: \"%s\"", recentTitle))
-	parts = append(parts, "Recommend 15 titles that someone who loved this would also enjoy.")
+	parts = append(parts, fmt.Sprintf("Recommend %d titles that someone who loved this would also enjoy.", cfg.MaxResults))
 	parts = append(parts, "Consider: similar themes, tone, director style, era, and genre.")
 
 	if len(cfg.ContentTypes) > 0 {
 		parts = append(parts, fmt.Sprintf("CONTENT TYPES: %s only", strings.Join(cfg.ContentTypes, ", ")))
 	}
+	parts = appendYearRange(parts, cfg)
 
 	return strings.Join(parts, "\n")
 }

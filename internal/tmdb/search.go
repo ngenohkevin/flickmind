@@ -15,55 +15,80 @@ import (
 func (c *Client) FindInTMDB(ctx context.Context, rec ai.Recommendation) *SearchResult {
 	// Search movies
 	if rec.Type == "movie" || rec.Type == "anime" {
-		movies, err := c.SearchMovies(ctx, rec.Title, rec.Year)
-		if err == nil && len(movies) > 0 {
-			// Try exact year match first
-			var match *tmdbMovieResult
-			for i := range movies {
-				if extractYear(movies[i].ReleaseDate) == rec.Year {
-					match = &movies[i]
-					break
-				}
-			}
-			if match == nil {
-				match = &movies[0]
-			}
-			return movieToResult(match)
+		if result := c.searchMovieWithRetry(ctx, rec.Title, rec.Year); result != nil {
+			return result
 		}
 	}
 
 	// Search TV
 	if rec.Type == "series" || rec.Type == "anime" {
-		shows, err := c.SearchTV(ctx, rec.Title, rec.Year)
-		if err == nil && len(shows) > 0 {
-			var match *tmdbTVResult
-			for i := range shows {
-				if extractYear(shows[i].FirstAirDate) == rec.Year {
-					match = &shows[i]
-					break
-				}
-			}
-			if match == nil {
-				match = &shows[0]
-			}
-			return tvToResult(match)
+		if result := c.searchTVWithRetry(ctx, rec.Title, rec.Year); result != nil {
+			return result
 		}
 	}
 
 	// If type was movie but no results, try TV (and vice versa)
 	if rec.Type == "movie" {
-		shows, err := c.SearchTV(ctx, rec.Title, rec.Year)
-		if err == nil && len(shows) > 0 {
-			return tvToResult(&shows[0])
+		if result := c.searchTVWithRetry(ctx, rec.Title, rec.Year); result != nil {
+			return result
 		}
 	} else if rec.Type == "series" {
-		movies, err := c.SearchMovies(ctx, rec.Title, rec.Year)
-		if err == nil && len(movies) > 0 {
-			return movieToResult(&movies[0])
+		if result := c.searchMovieWithRetry(ctx, rec.Title, rec.Year); result != nil {
+			return result
 		}
 	}
 
 	log.Printf("[TMDB] Could not find: %q (%d)", rec.Title, rec.Year)
+	return nil
+}
+
+func (c *Client) searchMovieWithRetry(ctx context.Context, title string, year int) *SearchResult {
+	movies, err := c.SearchMovies(ctx, title, year)
+	if err == nil && len(movies) > 0 {
+		var match *tmdbMovieResult
+		for i := range movies {
+			if extractYear(movies[i].ReleaseDate) == year {
+				match = &movies[i]
+				break
+			}
+		}
+		if match == nil {
+			match = &movies[0]
+		}
+		return movieToResult(match)
+	}
+	// Retry without year if AI gave a slightly wrong year
+	if year > 0 {
+		movies, err = c.SearchMovies(ctx, title, 0)
+		if err == nil && len(movies) > 0 {
+			return movieToResult(&movies[0])
+		}
+	}
+	return nil
+}
+
+func (c *Client) searchTVWithRetry(ctx context.Context, title string, year int) *SearchResult {
+	shows, err := c.SearchTV(ctx, title, year)
+	if err == nil && len(shows) > 0 {
+		var match *tmdbTVResult
+		for i := range shows {
+			if extractYear(shows[i].FirstAirDate) == year {
+				match = &shows[i]
+				break
+			}
+		}
+		if match == nil {
+			match = &shows[0]
+		}
+		return tvToResult(match)
+	}
+	// Retry without year if AI gave a slightly wrong year
+	if year > 0 {
+		shows, err = c.SearchTV(ctx, title, 0)
+		if err == nil && len(shows) > 0 {
+			return tvToResult(&shows[0])
+		}
+	}
 	return nil
 }
 
@@ -77,7 +102,7 @@ func (c *Client) EnrichRecommendations(ctx context.Context, recs []ai.Recommenda
 	var results []indexedResult
 	var wg sync.WaitGroup
 
-	sem := make(chan struct{}, 5) // limit concurrency
+	sem := make(chan struct{}, 8) // limit concurrency
 
 	for i, rec := range recs {
 		wg.Add(1)
@@ -114,12 +139,12 @@ func (c *Client) EnrichRecommendations(ctx context.Context, recs []ai.Recommenda
 }
 
 // DiscoverFallback returns popular content from TMDB discover when no AI is available
-func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres []string, minRating float64) []SearchResult {
+func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres []string, minRating float64, yearFrom, yearTo int) []SearchResult {
 	params := url.Values{
-		"sort_by":                {"popularity.desc"},
-		"vote_count.gte":        {"100"},
-		"include_adult":         {"false"},
-		"language":              {"en-US"},
+		"sort_by":        {"popularity.desc"},
+		"vote_count.gte": {"100"},
+		"include_adult":  {"false"},
+		"language":       {"en-US"},
 	}
 
 	if minRating > 0 {
@@ -129,6 +154,25 @@ func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres 
 	genreIDs := mapGenreNamesToIDs(genres, mediaType)
 	if len(genreIDs) > 0 {
 		params.Set("with_genres", strings.Join(genreIDs, ","))
+	}
+
+	// Apply year range filters
+	if yearFrom > 0 || yearTo > 0 {
+		if mediaType == "series" {
+			if yearFrom > 0 {
+				params.Set("first_air_date.gte", fmt.Sprintf("%d-01-01", yearFrom))
+			}
+			if yearTo > 0 {
+				params.Set("first_air_date.lte", fmt.Sprintf("%d-12-31", yearTo))
+			}
+		} else {
+			if yearFrom > 0 {
+				params.Set("primary_release_date.gte", fmt.Sprintf("%d-01-01", yearFrom))
+			}
+			if yearTo > 0 {
+				params.Set("primary_release_date.lte", fmt.Sprintf("%d-12-31", yearTo))
+			}
+		}
 	}
 
 	var results []SearchResult

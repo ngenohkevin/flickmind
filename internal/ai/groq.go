@@ -53,9 +53,8 @@ func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommend
 			{"role": "system", "content": "You are FlickMind, an expert movie and TV recommendation engine. Always respond with valid JSON only."},
 			{"role": "user", "content": cfg.Prompt},
 		},
-		"temperature":     0.7,
-		"max_tokens":      4000,
-		"response_format": map[string]string{"type": "json_object"},
+		"temperature": 0.7,
+		"max_tokens":  4000,
 	}
 
 	bodyJSON, err := json.Marshal(body)
