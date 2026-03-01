@@ -22,6 +22,7 @@ func BuildManifest(baseURL, frontendURL, userID string, cfg *store.UserConfig) M
 		Version:     "1.0.0",
 		Name:        "FlickMind",
 		Description: "AI-powered movie & TV recommendations. Personalized picks using Groq, DeepSeek, or Gemini — bring your own API key.",
+		Logo:        frontendURL + "/icon.svg",
 		Resources:   []string{"catalog"},
 		Types:       []string{"movie", "series"},
 		Catalogs:    catalogs,
