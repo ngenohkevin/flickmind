@@ -20,6 +20,7 @@ func (g *GroqProvider) GetRecommendations(ctx context.Context, apiKey, prompt st
 		APIKey:   apiKey,
 		Prompt:   prompt,
 		Provider: "groq",
+		JSONMode: true,
 	})
 }
 
@@ -45,6 +46,7 @@ type openAIConfig struct {
 	Prompt    string
 	Provider  string
 	MaxTokens int
+	JSONMode  bool
 }
 
 func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommendation, error) {
@@ -61,6 +63,10 @@ func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommend
 		},
 		"temperature": 0.7,
 		"max_tokens":  maxTokens,
+	}
+
+	if cfg.JSONMode {
+		body["response_format"] = map[string]string{"type": "json_object"}
 	}
 
 	bodyJSON, err := json.Marshal(body)
