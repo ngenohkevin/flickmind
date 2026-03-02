@@ -29,23 +29,30 @@ func (d *DeepSeekProvider) Name() string { return "deepseek" }
 
 func (d *DeepSeekProvider) GetRecommendations(ctx context.Context, apiKey, prompt string) ([]Recommendation, error) {
 	return openAICompatibleRequest(ctx, openAIConfig{
-		URL:      "https://api.deepseek.com/v1/chat/completions",
-		Model:    "deepseek-chat",
-		APIKey:   apiKey,
-		Prompt:   prompt,
-		Provider: "deepseek",
+		URL:       "https://api.deepseek.com/v1/chat/completions",
+		Model:     "deepseek-chat",
+		APIKey:    apiKey,
+		Prompt:    prompt,
+		Provider:  "deepseek",
+		MaxTokens: 2500,
 	})
 }
 
 type openAIConfig struct {
-	URL      string
-	Model    string
-	APIKey   string
-	Prompt   string
-	Provider string
+	URL       string
+	Model     string
+	APIKey    string
+	Prompt    string
+	Provider  string
+	MaxTokens int
 }
 
 func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommendation, error) {
+	maxTokens := cfg.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4000
+	}
+
 	body := map[string]interface{}{
 		"model": cfg.Model,
 		"messages": []map[string]string{
@@ -53,7 +60,7 @@ func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommend
 			{"role": "user", "content": cfg.Prompt},
 		},
 		"temperature": 0.7,
-		"max_tokens":  4000,
+		"max_tokens":  maxTokens,
 	}
 
 	bodyJSON, err := json.Marshal(body)

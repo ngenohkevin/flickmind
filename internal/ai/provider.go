@@ -33,8 +33,14 @@ type ProviderEntry struct {
 	APIKey   string
 }
 
-// perProviderTimeout caps each provider attempt so fallbacks get a fair chance.
-const perProviderTimeout = 30 * time.Second
+// providerTimeout returns a per-provider timeout so fallbacks get a fair chance.
+// DeepSeek is slower and needs more time.
+func providerTimeout(name string) time.Duration {
+	if name == "deepseek" {
+		return 45 * time.Second
+	}
+	return 30 * time.Second
+}
 
 func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt string) (*ProviderResult, error) {
 	var lastErr error
@@ -52,7 +58,7 @@ func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt s
 
 		log.Printf("[AI] Trying provider: %s", entry.Provider.Name())
 
-		providerCtx, cancel := context.WithTimeout(ctx, perProviderTimeout)
+		providerCtx, cancel := context.WithTimeout(ctx, providerTimeout(entry.Provider.Name()))
 		recs, err := withRetry(providerCtx, func() ([]Recommendation, error) {
 			return entry.Provider.GetRecommendations(providerCtx, entry.APIKey, prompt)
 		}, entry.Provider.Name())
