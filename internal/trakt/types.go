@@ -15,10 +15,10 @@ type TokenResponse struct {
 }
 
 type traktHistoryItem struct {
-	WatchedAt string          `json:"watched_at"`
-	Type      string          `json:"type"`
-	Movie     *traktMovie     `json:"movie,omitempty"`
-	Show      *traktShow      `json:"show,omitempty"`
+	WatchedAt string      `json:"watched_at"`
+	Type      string      `json:"type"`
+	Movie     *traktMovie `json:"movie,omitempty"`
+	Show      *traktShow  `json:"show,omitempty"`
 }
 
 type traktMovie struct {

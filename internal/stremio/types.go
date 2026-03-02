@@ -1,15 +1,15 @@
 package stremio
 
 type Manifest struct {
-	ID          string          `json:"id"`
-	Version     string          `json:"version"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Logo        string          `json:"logo,omitempty"`
-	Resources   []string        `json:"resources"`
-	Types       []string        `json:"types"`
-	Catalogs    []CatalogDef    `json:"catalogs"`
-	IDPrefixes  []string        `json:"idPrefixes,omitempty"`
+	ID            string         `json:"id"`
+	Version       string         `json:"version"`
+	Name          string         `json:"name"`
+	Description   string         `json:"description"`
+	Logo          string         `json:"logo,omitempty"`
+	Resources     []string       `json:"resources"`
+	Types         []string       `json:"types"`
+	Catalogs      []CatalogDef   `json:"catalogs"`
+	IDPrefixes    []string       `json:"idPrefixes,omitempty"`
 	BehaviorHints *BehaviorHints `json:"behaviorHints,omitempty"`
 }
 

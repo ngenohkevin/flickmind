@@ -26,8 +26,8 @@ func (g *GeminiProvider) GetRecommendations(ctx context.Context, apiKey, prompt 
 			},
 		},
 		"generationConfig": map[string]interface{}{
-			"temperature":     0.7,
-			"maxOutputTokens": 4000,
+			"temperature":      0.7,
+			"maxOutputTokens":  4000,
 			"responseMimeType": "application/json",
 		},
 	}
