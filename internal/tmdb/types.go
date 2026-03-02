@@ -43,8 +43,3 @@ type tmdbTVResult struct {
 type tmdbSearchResponse[T any] struct {
 	Results []T `json:"results"`
 }
-
-type tmdbGenre struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-}

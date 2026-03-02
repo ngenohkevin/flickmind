@@ -395,7 +395,9 @@ func (s *Server) fetchWatchHistory(ctx context.Context, cfg *store.UserConfig) [
 			return nil
 		}
 		expiresAt := trakt.TokenExpiresAt(tokenResp)
-		s.store.SaveTraktTokens(ctx, cfg.UserID, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt)
+		if err := s.store.SaveTraktTokens(ctx, cfg.UserID, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt); err != nil {
+			log.Printf("[Trakt] Failed to save refreshed tokens: %v", err)
+		}
 		cfg.TraktAccessToken = tokenResp.AccessToken
 	}
 

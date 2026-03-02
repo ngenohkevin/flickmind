@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	godotenv.Load()
+	_ = godotenv.Load()
 	cfg := config.Load()
 
 	if cfg.TMDBAPIKey == "" {
@@ -55,7 +55,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	httpSrv.Shutdown(ctx)
+	_ = httpSrv.Shutdown(ctx)
 	srv.Close()
 
 	log.Println("[INFO] FlickMind stopped")

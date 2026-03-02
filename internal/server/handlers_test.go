@@ -112,7 +112,9 @@ func TestHealthRoute(t *testing.T) {
 	}
 
 	var body map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &body)
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 	if body["status"] != "ok" {
 		t.Fatalf("expected status ok, got %v", body["status"])
 	}
@@ -123,7 +125,9 @@ func TestHealthRoute(t *testing.T) {
 
 func TestManifestRoute(t *testing.T) {
 	ms := newMockStore()
-	ms.CreateUser(context.Background(), "testuser")
+	if err := ms.CreateUser(context.Background(), "testuser"); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 	srv := newTestServer(ms)
 
 	w := httptest.NewRecorder()
@@ -135,7 +139,9 @@ func TestManifestRoute(t *testing.T) {
 	}
 
 	var manifest map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &manifest)
+	if err := json.Unmarshal(w.Body.Bytes(), &manifest); err != nil {
+		t.Fatalf("failed to unmarshal manifest: %v", err)
+	}
 
 	if manifest["id"] != "community.flickmind" {
 		t.Errorf("expected manifest id community.flickmind, got %v", manifest["id"])
@@ -155,7 +161,9 @@ func TestManifestRoute(t *testing.T) {
 
 func TestCatalogRoute_WithJsonSuffix(t *testing.T) {
 	ms := newMockStore()
-	ms.CreateUser(context.Background(), "testuser")
+	if err := ms.CreateUser(context.Background(), "testuser"); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 	srv := newTestServer(ms)
 
 	// This is the exact bug: Stremio sends /:userId/catalog/:type/:id.json
@@ -172,7 +180,9 @@ func TestCatalogRoute_WithJsonSuffix(t *testing.T) {
 	}
 
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 
 	if _, ok := resp["metas"]; !ok {
 		t.Fatal("response should have 'metas' key")
@@ -187,7 +197,9 @@ func TestCatalogRoute_WithJsonSuffix(t *testing.T) {
 	srv.router.ServeHTTP(w2, req2)
 
 	var resp2 map[string]interface{}
-	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	if err := json.Unmarshal(w2.Body.Bytes(), &resp2); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 	metas := resp2["metas"].([]interface{})
 	if len(metas) != 0 {
 		t.Error("unknown catalog should return empty metas")
@@ -196,7 +208,9 @@ func TestCatalogRoute_WithJsonSuffix(t *testing.T) {
 
 func TestCatalogRoute_AllCatalogIDs(t *testing.T) {
 	ms := newMockStore()
-	ms.CreateUser(context.Background(), "testuser")
+	if err := ms.CreateUser(context.Background(), "testuser"); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 	srv := newTestServer(ms)
 
 	// Test that all catalog routes resolve (not 404).
@@ -236,7 +250,9 @@ func TestCatalogRoute_AllCatalogIDs(t *testing.T) {
 
 func TestCatalogRoute_UnknownCatalog(t *testing.T) {
 	ms := newMockStore()
-	ms.CreateUser(context.Background(), "testuser")
+	if err := ms.CreateUser(context.Background(), "testuser"); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 	srv := newTestServer(ms)
 
 	w := httptest.NewRecorder()
@@ -248,7 +264,9 @@ func TestCatalogRoute_UnknownCatalog(t *testing.T) {
 	}
 
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 	metas := resp["metas"].([]interface{})
 	if len(metas) != 0 {
 		t.Errorf("expected empty metas for unknown catalog, got %d", len(metas))
@@ -271,7 +289,9 @@ func TestConfigCRUD(t *testing.T) {
 	}
 
 	var createResp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &createResp)
+	if err := json.Unmarshal(w.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 	userID, ok := createResp["userId"].(string)
 	if !ok || userID == "" {
 		t.Fatal("expected userId in create response")
@@ -287,7 +307,9 @@ func TestConfigCRUD(t *testing.T) {
 	}
 
 	var getResp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &getResp)
+	if err := json.Unmarshal(w.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 	if getResp["userId"] != userID {
 		t.Errorf("expected userId %s, got %v", userID, getResp["userId"])
 	}
@@ -308,7 +330,9 @@ func TestConfigCRUD(t *testing.T) {
 	req, _ = http.NewRequest("GET", "/api/config/"+userID, nil)
 	srv.router.ServeHTTP(w, req)
 
-	json.Unmarshal(w.Body.Bytes(), &getResp)
+	if err := json.Unmarshal(w.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 	if getResp["language"] != "fr" {
 		t.Errorf("expected language fr, got %v", getResp["language"])
 	}
@@ -319,7 +343,9 @@ func TestConfigCRUD(t *testing.T) {
 
 func TestConfigMasking(t *testing.T) {
 	ms := newMockStore()
-	ms.CreateUser(context.Background(), "testuser")
+	if err := ms.CreateUser(context.Background(), "testuser"); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 	ms.configs["testuser"].GroqKey = "gsk_abc123xyz"
 	ms.configs["testuser"].DeepSeekKey = "sk-deepseek-key-789"
 	ms.configs["testuser"].GeminiKey = ""
@@ -330,7 +356,9 @@ func TestConfigMasking(t *testing.T) {
 	srv.router.ServeHTTP(w, req)
 
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
 
 	groqKey := resp["groqKey"].(string)
 	if groqKey != "••••3xyz" {
@@ -350,7 +378,9 @@ func TestConfigMasking(t *testing.T) {
 
 func TestUpdateConfig_PreservesMaskedKeys(t *testing.T) {
 	ms := newMockStore()
-	ms.CreateUser(context.Background(), "testuser")
+	if err := ms.CreateUser(context.Background(), "testuser"); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 	ms.configs["testuser"].GroqKey = "gsk_real_secret_key"
 	srv := newTestServer(ms)
 
