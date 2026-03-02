@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -58,9 +60,14 @@ func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt s
 
 		log.Printf("[AI] Trying provider: %s", entry.Provider.Name())
 
+		providerPrompt := prompt
+		if entry.Provider.Name() == "deepseek" {
+			providerPrompt = capPromptTitles(prompt, 25)
+		}
+
 		providerCtx, cancel := context.WithTimeout(ctx, providerTimeout(entry.Provider.Name()))
 		recs, err := withRetry(providerCtx, func() ([]Recommendation, error) {
-			return entry.Provider.GetRecommendations(providerCtx, entry.APIKey, prompt)
+			return entry.Provider.GetRecommendations(providerCtx, entry.APIKey, providerPrompt)
 		}, entry.Provider.Name())
 		cancel()
 
@@ -91,6 +98,23 @@ func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt s
 		return nil, fmt.Errorf("all providers failed: %w", lastErr)
 	}
 	return nil, errors.New("no AI providers configured")
+}
+
+var titleCountRe = regexp.MustCompile(`(?i)(recommend(?:\s+exactly)?\s+)(\d+)(\s+(?:NEW\s+)?titles)`)
+
+// capPromptTitles reduces the requested title count in the prompt for slower providers.
+func capPromptTitles(prompt string, max int) string {
+	return titleCountRe.ReplaceAllStringFunc(prompt, func(match string) string {
+		sub := titleCountRe.FindStringSubmatch(match)
+		if len(sub) < 4 {
+			return match
+		}
+		n, err := strconv.Atoi(sub[2])
+		if err != nil || n <= max {
+			return match
+		}
+		return sub[1] + strconv.Itoa(max) + sub[3]
+	})
 }
 
 func isNonRetriable(err error) bool {
