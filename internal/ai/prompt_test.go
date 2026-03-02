@@ -131,7 +131,7 @@ func TestBuildAIPicksPrompt_NoPreferences(t *testing.T) {
 	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
 	prompt := BuildAIPicksPrompt(cfg, nil, "movie")
 
-	if !strings.Contains(prompt, "FlickMind") {
+	if !strings.Contains(prompt, "Recommend exactly") {
 		t.Error("prompt should contain system prompt even without preferences")
 	}
 	if !strings.Contains(prompt, "personalized mix") {

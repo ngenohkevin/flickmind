@@ -16,7 +16,7 @@ func (g *GroqProvider) Name() string { return "groq" }
 func (g *GroqProvider) GetRecommendations(ctx context.Context, apiKey, prompt string) ([]Recommendation, error) {
 	return openAICompatibleRequest(ctx, openAIConfig{
 		URL:      "https://api.groq.com/openai/v1/chat/completions",
-		Model:    "llama-3.3-70b-versatile",
+		Model:    "llama-3.1-8b-instant",
 		APIKey:   apiKey,
 		Prompt:   prompt,
 		Provider: "groq",
@@ -56,7 +56,7 @@ func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommend
 	body := map[string]interface{}{
 		"model": cfg.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": "You are FlickMind, an expert movie and TV recommendation engine. Always respond with valid JSON only."},
+			{"role": "system", "content": "You are a movie/TV recommendation engine. Respond with valid JSON only."},
 			{"role": "user", "content": cfg.Prompt},
 		},
 		"temperature": 0.7,

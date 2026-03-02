@@ -50,36 +50,12 @@ func buildSystemPrompt(maxResults int, mediaType string, contentTypes []string) 
 		typeInstruction = "TV series only (no movies)"
 	}
 
-	return fmt.Sprintf(`You are FlickMind, an expert movie and TV recommendation engine.
+	return fmt.Sprintf(`Recommend exactly %d titles (%s). Only real, released titles. Diversify by director/country/tone.
 
-TASK: Given the user's preferences, recommend exactly %d titles (%s).
+Types: movie, series, anime (Japanese animation, movie or series).
 
-CONTENT TYPES:
-- movie: Feature films
-- series: TV series
-- anime: Japanese animation (movies or series)
-
-RULES:
-1. Only recommend real, existing titles
-2. Prioritize content from 1990-present unless asked for classics
-3. Diversify recommendations (different directors, studios, countries)
-4. Match the MOOD and TONE, not just plot keywords
-5. For anime requests, prefer highly-rated series
-6. Consider both popular and lesser-known titles for variety
-7. Never include unreleased or upcoming titles
-8. Return exactly %d results
-
-OUTPUT FORMAT (strict JSON array, no markdown, no explanation):
-[
-  {
-    "title": "Exact Title",
-    "year": 2020,
-    "type": "movie" | "series" | "anime",
-    "reason": "One compelling sentence explaining why this matches"
-  }
-]
-
-IMPORTANT: Return ONLY the JSON array. No markdown code blocks, no additional text.`, maxResults, typeInstruction, maxResults)
+Return ONLY a JSON array, no markdown:
+[{"title":"Exact Title","year":2020,"type":"movie","reason":"Why this matches"}]`, maxResults, typeInstruction)
 }
 
 func appendYearRange(parts []string, cfg *store.UserConfig) []string {
