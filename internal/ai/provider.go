@@ -33,6 +33,9 @@ type ProviderEntry struct {
 	APIKey   string
 }
 
+// perProviderTimeout caps each provider attempt so fallbacks get a fair chance.
+const perProviderTimeout = 20 * time.Second
+
 func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt string) (*ProviderResult, error) {
 	var lastErr error
 
@@ -41,11 +44,19 @@ func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt s
 			continue
 		}
 
+		// Check if parent context is already done before trying next provider
+		if ctx.Err() != nil {
+			lastErr = ctx.Err()
+			break
+		}
+
 		log.Printf("[AI] Trying provider: %s", entry.Provider.Name())
 
-		recs, err := withRetry(ctx, func() ([]Recommendation, error) {
-			return entry.Provider.GetRecommendations(ctx, entry.APIKey, prompt)
+		providerCtx, cancel := context.WithTimeout(ctx, perProviderTimeout)
+		recs, err := withRetry(providerCtx, func() ([]Recommendation, error) {
+			return entry.Provider.GetRecommendations(providerCtx, entry.APIKey, prompt)
 		}, entry.Provider.Name())
+		cancel()
 
 		if err != nil {
 			log.Printf("[AI] Provider %s failed: %v", entry.Provider.Name(), err)
@@ -81,7 +92,9 @@ func isNonRetriable(err error) bool {
 	return strings.Contains(msg, "not configured") ||
 		strings.Contains(msg, "api key") ||
 		strings.Contains(msg, "insufficient balance") ||
-		strings.Contains(msg, "invalid api key")
+		strings.Contains(msg, "invalid api key") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "429")
 }
 
 func withRetry(ctx context.Context, fn func() ([]Recommendation, error), providerName string) ([]Recommendation, error) {
