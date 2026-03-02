@@ -35,7 +35,7 @@ func TestFilterByType_Movie(t *testing.T) {
 		{ID: 3, Title: "Movie C", MediaType: "movie"},
 	}
 
-	metas := filterByType(results, "movie")
+	metas := filterByType(results, "movie", nil)
 	if len(metas) != 2 {
 		t.Fatalf("expected 2 movies, got %d", len(metas))
 	}
@@ -53,7 +53,7 @@ func TestFilterByType_Series(t *testing.T) {
 		{ID: 2, Title: "Show B", MediaType: "tv"},
 	}
 
-	metas := filterByType(results, "series")
+	metas := filterByType(results, "series", nil)
 	if len(metas) != 1 {
 		t.Fatalf("expected 1 series, got %d", len(metas))
 	}
@@ -68,14 +68,28 @@ func TestFilterByType_EmptyMediaType(t *testing.T) {
 		{ID: 2, Title: "Show B", MediaType: "tv"},
 	}
 
-	metas := filterByType(results, "")
+	metas := filterByType(results, "", nil)
 	if len(metas) != 2 {
 		t.Fatalf("expected all results with empty type, got %d", len(metas))
 	}
 }
 
+func TestFilterByType_AnimeAllowsBothTypes(t *testing.T) {
+	results := []tmdb.SearchResult{
+		{ID: 1, Title: "Movie A", MediaType: "movie"},
+		{ID: 2, Title: "Show B", MediaType: "tv"},
+		{ID: 3, Title: "Movie C", MediaType: "movie"},
+	}
+
+	// With anime content type, both movie and tv should pass through
+	metas := filterByType(results, "movie", []string{"anime"})
+	if len(metas) != 3 {
+		t.Fatalf("expected 3 results with anime content type, got %d", len(metas))
+	}
+}
+
 func TestFilterByType_EmptyResults(t *testing.T) {
-	metas := filterByType(nil, "movie")
+	metas := filterByType(nil, "movie", nil)
 	if metas == nil {
 		t.Fatal("filterByType should return empty slice, not nil")
 	}

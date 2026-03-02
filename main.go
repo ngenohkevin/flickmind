@@ -36,7 +36,7 @@ func main() {
 		Addr:         ":" + cfg.Port,
 		Handler:      srv.Router(),
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 90 * time.Second,
+		WriteTimeout: 120 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 

@@ -38,6 +38,7 @@ type configRequest struct {
 	YearTo               int      `json:"yearTo"`
 	MaxResults           int      `json:"maxResults"`
 	RecommendationSource string   `json:"recommendationSource"`
+	RefreshInterval      string   `json:"refreshInterval"`
 }
 
 func (s *Server) handleCreateConfig(c *gin.Context) {
@@ -65,6 +66,11 @@ func (s *Server) handleCreateConfig(c *gin.Context) {
 		recSource = "preferences"
 	}
 
+	refreshInterval := req.RefreshInterval
+	if refreshInterval == "" {
+		refreshInterval = "2h"
+	}
+
 	cfg := &store.UserConfig{
 		UserID:               userID,
 		GroqKey:              req.GroqKey,
@@ -79,6 +85,7 @@ func (s *Server) handleCreateConfig(c *gin.Context) {
 		YearTo:               req.YearTo,
 		MaxResults:           maxResults,
 		RecommendationSource: recSource,
+		RefreshInterval:      refreshInterval,
 	}
 
 	if err := s.store.SaveUserConfig(c.Request.Context(), cfg); err != nil {
@@ -118,6 +125,7 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 		"yearTo":               cfg.YearTo,
 		"maxResults":           cfg.MaxResults,
 		"recommendationSource": cfg.RecommendationSource,
+		"refreshInterval":      cfg.RefreshInterval,
 		"hasTrakt":             s.cfg.TraktClientID != "",
 	})
 }
@@ -166,6 +174,9 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 	}
 	if req.RecommendationSource != "" {
 		existing.RecommendationSource = req.RecommendationSource
+	}
+	if req.RefreshInterval != "" {
+		existing.RefreshInterval = req.RefreshInterval
 	}
 
 	if err := s.store.SaveUserConfig(c.Request.Context(), existing); err != nil {
@@ -299,8 +310,8 @@ func (s *Server) handleCatalog(c *gin.Context) {
 
 	resp := stremio.CatalogResponse{Metas: metas}
 
-	ttl := 2 * time.Hour
-	if catalogID == "flickmind-hidden-gems" {
+	ttl := store.ParseRefreshInterval(cfg.RefreshInterval)
+	if catalogID == "flickmind-hidden-gems" && ttl < 6*time.Hour {
 		ttl = 6 * time.Hour
 	}
 	s.cache.Set(cacheKey, resp, ttl)
@@ -325,13 +336,13 @@ func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaTyp
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
+			return limitResults(filterByType(enriched, mediaType, cfg.ContentTypes), cfg.MaxResults)
 		}
 		log.Printf("[AI Picks] AI failed: %v, falling back to TMDB", err)
 	}
 
 	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
+	return limitResults(filterByType(results, mediaType, nil), cfg.MaxResults)
 }
 
 func (s *Server) getWatchlistPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -354,13 +365,13 @@ func (s *Server) getWatchlistPicks(ctx context.Context, cfg *store.UserConfig, m
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
+			return limitResults(filterByType(enriched, mediaType, cfg.ContentTypes), cfg.MaxResults)
 		}
 		log.Printf("[Watchlist Picks] AI failed: %v, falling back to TMDB", err)
 	}
 
 	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
+	return limitResults(filterByType(results, mediaType, nil), cfg.MaxResults)
 }
 
 func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -376,13 +387,13 @@ func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, media
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
+			return limitResults(filterByType(enriched, mediaType, cfg.ContentTypes), cfg.MaxResults)
 		}
 		log.Printf("[Hidden Gems] AI failed: %v, falling back to TMDB", err)
 	}
 
 	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, 7.0, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
+	return limitResults(filterByType(results, mediaType, nil), cfg.MaxResults)
 }
 
 func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -402,7 +413,7 @@ func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
+			return limitResults(filterByType(enriched, mediaType, cfg.ContentTypes), cfg.MaxResults)
 		}
 		log.Printf("[Because You Watched] AI failed: %v", err)
 	}
@@ -490,14 +501,24 @@ func (s *Server) fetchWatchlist(ctx context.Context, cfg *store.UserConfig) []st
 	return titles
 }
 
-func filterByType(results []tmdb.SearchResult, mediaType string) []stremio.Meta {
+func hasFlexibleContentType(contentTypes []string) bool {
+	for _, ct := range contentTypes {
+		if ct == "anime" || ct == "documentary" {
+			return true
+		}
+	}
+	return false
+}
+
+func filterByType(results []tmdb.SearchResult, mediaType string, contentTypes []string) []stremio.Meta {
+	flexible := hasFlexibleContentType(contentTypes)
 	var metas []stremio.Meta
 	for _, r := range results {
 		stremioType := "movie"
 		if r.MediaType == "tv" {
 			stremioType = "series"
 		}
-		if stremioType == mediaType || mediaType == "" {
+		if flexible || stremioType == mediaType || mediaType == "" {
 			metas = append(metas, stremio.TMDBResultToMeta(r, r.Reason))
 		}
 	}

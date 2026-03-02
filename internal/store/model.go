@@ -27,6 +27,7 @@ type UserConfig struct {
 	YearTo               int        `json:"yearTo"`
 	MaxResults           int        `json:"maxResults"`
 	RecommendationSource string     `json:"recommendationSource"`
+	RefreshInterval      string     `json:"refreshInterval"`
 }
 
 type Store struct {
@@ -68,12 +69,12 @@ func (s *Store) GetUserConfig(ctx context.Context, userID string) (*UserConfig, 
 		SELECT groq_key, deepseek_key, gemini_key,
 		       trakt_access_token, trakt_refresh_token, trakt_expires_at,
 		       genres, content_types, language, mood, min_rating,
-		       year_from, year_to, max_results, recommendation_source
+		       year_from, year_to, max_results, recommendation_source, refresh_interval
 		FROM user_config WHERE user_id = $1`, userID).Scan(
 		&cfg.GroqKey, &cfg.DeepSeekKey, &cfg.GeminiKey,
 		&cfg.TraktAccessToken, &cfg.TraktRefreshToken, &traktExpiresAt,
 		&genres, &contentTypes, &cfg.Language, &cfg.Mood, &cfg.MinRating,
-		&cfg.YearFrom, &cfg.YearTo, &cfg.MaxResults, &cfg.RecommendationSource,
+		&cfg.YearFrom, &cfg.YearTo, &cfg.MaxResults, &cfg.RecommendationSource, &cfg.RefreshInterval,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -92,6 +93,9 @@ func (s *Store) GetUserConfig(ctx context.Context, userID string) (*UserConfig, 
 	if cfg.RecommendationSource == "" {
 		cfg.RecommendationSource = "preferences"
 	}
+	if cfg.RefreshInterval == "" {
+		cfg.RefreshInterval = "2h"
+	}
 
 	return cfg, nil
 }
@@ -102,12 +106,12 @@ func (s *Store) SaveUserConfig(ctx context.Context, cfg *UserConfig) error {
 		    groq_key = $1, deepseek_key = $2, gemini_key = $3,
 		    genres = $4, content_types = $5, language = $6, mood = $7, min_rating = $8,
 		    year_from = $9, year_to = $10, max_results = $11, recommendation_source = $12,
-		    updated_at = NOW()
-		WHERE user_id = $13`,
+		    refresh_interval = $13, updated_at = NOW()
+		WHERE user_id = $14`,
 		cfg.GroqKey, cfg.DeepSeekKey, cfg.GeminiKey,
 		joinCSV(cfg.Genres), joinCSV(cfg.ContentTypes), cfg.Language, cfg.Mood, cfg.MinRating,
 		cfg.YearFrom, cfg.YearTo, cfg.MaxResults, cfg.RecommendationSource,
-		cfg.UserID,
+		cfg.RefreshInterval, cfg.UserID,
 	)
 	return err
 }
@@ -164,6 +168,25 @@ func (s *Store) InvalidateUserCache(ctx context.Context, userID string) error {
 func (s *Store) CleanExpiredCache(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM recommendation_cache WHERE expires_at <= NOW()`)
 	return err
+}
+
+// ParseRefreshInterval converts the user's refresh interval string to a duration.
+// Valid values: "1h", "2h", "6h", "12h", "24h". Defaults to 2h.
+func ParseRefreshInterval(interval string) time.Duration {
+	switch interval {
+	case "1h":
+		return 1 * time.Hour
+	case "2h":
+		return 2 * time.Hour
+	case "6h":
+		return 6 * time.Hour
+	case "12h":
+		return 12 * time.Hour
+	case "24h":
+		return 24 * time.Hour
+	default:
+		return 2 * time.Hour
+	}
 }
 
 func splitCSV(s string) []string {

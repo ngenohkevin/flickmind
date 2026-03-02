@@ -161,8 +161,9 @@ func TestBuildAIPicksPrompt_MaxResults(t *testing.T) {
 	cfg := cfgWithDefaults(&store.UserConfig{Language: "en", MaxResults: 30})
 	prompt := BuildAIPicksPrompt(cfg, nil, "movie")
 
-	if !strings.Contains(prompt, "30") {
-		t.Error("prompt should include maxResults count")
+	// Over-requests by ~30%: 30 + 9 = 39
+	if !strings.Contains(prompt, "39") {
+		t.Errorf("prompt should include over-requested count (39), got prompt: %s", prompt[:200])
 	}
 }
 

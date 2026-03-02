@@ -38,10 +38,17 @@ func (c *Client) FindInTMDB(ctx context.Context, rec ai.Recommendation) *SearchR
 		return nil
 	}
 
-	// Fetch IMDB ID (non-fatal on error)
-	imdbID, err := c.GetExternalIDs(ctx, result.ID, result.MediaType)
-	if err == nil && imdbID != "" {
-		result.IMDBId = imdbID
+	// Fetch IMDB ID: use movie detail endpoint for movies (faster), external_ids for TV
+	if result.MediaType == "movie" {
+		imdbID, err := c.GetMovieIMDBId(ctx, result.ID)
+		if err == nil && imdbID != "" {
+			result.IMDBId = imdbID
+		}
+	} else {
+		imdbID, err := c.GetExternalIDs(ctx, result.ID, result.MediaType)
+		if err == nil && imdbID != "" {
+			result.IMDBId = imdbID
+		}
 	}
 
 	return result
@@ -107,7 +114,7 @@ func (c *Client) EnrichRecommendations(ctx context.Context, recs []ai.Recommenda
 	var results []indexedResult
 	var wg sync.WaitGroup
 
-	sem := make(chan struct{}, 8) // limit concurrency
+	sem := make(chan struct{}, 16) // limit concurrency (TMDB allows 40 req/10s)
 
 	for i, rec := range recs {
 		wg.Add(1)
@@ -184,9 +191,16 @@ func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres 
 
 	var results []SearchResult
 
+	// TMDB returns 20 results per page; fetch up to 3 pages to fill larger requests
+	maxPages := 3
+
 	if mediaType == "movie" || mediaType == "" {
-		movies, err := c.DiscoverMovies(ctx, params)
-		if err == nil {
+		for page := 1; page <= maxPages; page++ {
+			params.Set("page", strconv.Itoa(page))
+			movies, err := c.DiscoverMovies(ctx, params)
+			if err != nil || len(movies) == 0 {
+				break
+			}
 			for i := range movies {
 				results = append(results, *movieToResult(&movies[i]))
 			}
@@ -194,8 +208,12 @@ func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres 
 	}
 
 	if mediaType == "series" || mediaType == "" {
-		shows, err := c.DiscoverTV(ctx, params)
-		if err == nil {
+		for page := 1; page <= maxPages; page++ {
+			params.Set("page", strconv.Itoa(page))
+			shows, err := c.DiscoverTV(ctx, params)
+			if err != nil || len(shows) == 0 {
+				break
+			}
 			for i := range shows {
 				results = append(results, *tvToResult(&shows[i]))
 			}
