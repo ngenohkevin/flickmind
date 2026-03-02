@@ -291,7 +291,7 @@ func (s *Server) handleCatalog(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
 	defer cancel()
 
 	var metas []stremio.Meta
@@ -310,11 +310,13 @@ func (s *Server) handleCatalog(c *gin.Context) {
 
 	resp := stremio.CatalogResponse{Metas: metas}
 
-	ttl := store.ParseRefreshInterval(cfg.RefreshInterval)
-	if catalogID == "flickmind-hidden-gems" && ttl < 6*time.Hour {
-		ttl = 6 * time.Hour
+	if len(metas) > 0 {
+		ttl := store.ParseRefreshInterval(cfg.RefreshInterval)
+		if catalogID == "flickmind-hidden-gems" && ttl < 6*time.Hour {
+			ttl = 6 * time.Hour
+		}
+		s.cache.Set(cacheKey, resp, ttl)
 	}
-	s.cache.Set(cacheKey, resp, ttl)
 
 	c.JSON(200, resp)
 }

@@ -167,7 +167,7 @@ func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres 
 
 	genreIDs := mapGenreNamesToIDs(genres, mediaType)
 	if len(genreIDs) > 0 {
-		params.Set("with_genres", strings.Join(genreIDs, ","))
+		params.Set("with_genres", strings.Join(genreIDs, "|"))
 	}
 
 	// Apply year range filters
