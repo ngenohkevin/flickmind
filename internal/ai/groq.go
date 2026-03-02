@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 type GroqProvider struct{}
@@ -62,10 +61,7 @@ func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommend
 		return nil, err
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, "POST", cfg.URL, bytes.NewReader(bodyJSON))
+	req, err := http.NewRequestWithContext(ctx, "POST", cfg.URL, bytes.NewReader(bodyJSON))
 	if err != nil {
 		return nil, err
 	}

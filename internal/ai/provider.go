@@ -34,7 +34,7 @@ type ProviderEntry struct {
 }
 
 // perProviderTimeout caps each provider attempt so fallbacks get a fair chance.
-const perProviderTimeout = 20 * time.Second
+const perProviderTimeout = 30 * time.Second
 
 func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt string) (*ProviderResult, error) {
 	var lastErr error

@@ -291,7 +291,7 @@ func (s *Server) handleCatalog(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 110*time.Second)
 	defer cancel()
 
 	var metas []stremio.Meta
