@@ -82,6 +82,61 @@ func TestBuildManifest_NilConfig(t *testing.T) {
 	}
 }
 
+func TestBuildManifest_AnimeOnlyShowsBothTypes(t *testing.T) {
+	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"anime"}}
+	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
+
+	if len(m.Types) != 2 || m.Types[0] != "movie" || m.Types[1] != "series" {
+		t.Errorf("anime should map to both movie and series types, got %v", m.Types)
+	}
+	if len(m.Catalogs) != 4 {
+		t.Errorf("expected 4 catalogs for anime, got %d", len(m.Catalogs))
+	}
+}
+
+func TestBuildManifest_MovieOnly(t *testing.T) {
+	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"movie"}}
+	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
+
+	if len(m.Types) != 1 || m.Types[0] != "movie" {
+		t.Errorf("expected types [movie], got %v", m.Types)
+	}
+	if len(m.Catalogs) != 2 {
+		t.Errorf("expected 2 catalogs for movie-only, got %d", len(m.Catalogs))
+	}
+}
+
+func TestBuildManifest_SeriesOnly(t *testing.T) {
+	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"series"}}
+	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
+
+	if len(m.Types) != 1 || m.Types[0] != "series" {
+		t.Errorf("expected types [series], got %v", m.Types)
+	}
+	if len(m.Catalogs) != 2 {
+		t.Errorf("expected 2 catalogs for series-only, got %d", len(m.Catalogs))
+	}
+}
+
+func TestBuildManifest_DocumentaryShowsBothTypes(t *testing.T) {
+	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"documentary"}}
+	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
+
+	if len(m.Types) != 2 || m.Types[0] != "movie" || m.Types[1] != "series" {
+		t.Errorf("documentary should map to both movie and series types, got %v", m.Types)
+	}
+}
+
+func TestBuildManifest_LogoIsPNG(t *testing.T) {
+	cfg := &store.UserConfig{UserID: "abc123"}
+	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
+
+	expected := "http://localhost:3000/apple-touch-icon.png"
+	if m.Logo != expected {
+		t.Errorf("expected logo %s, got %s", expected, m.Logo)
+	}
+}
+
 func TestBuildManifest_ResourcesAndTypes(t *testing.T) {
 	cfg := &store.UserConfig{UserID: "abc123"}
 	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)

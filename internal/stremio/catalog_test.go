@@ -16,12 +16,14 @@ func TestTMDBResultToMeta_Movie(t *testing.T) {
 		Overview:     "A mind-bending thriller.",
 		VoteAverage:  8.8,
 		Year:         2010,
+		IMDBId:       "tt1375666",
+		GenreIDs:     []int{878, 28},
 	}
 
 	meta := TMDBResultToMeta(r, "Great sci-fi")
 
-	if meta.ID != "tmdb:123" {
-		t.Errorf("expected id tmdb:123, got %s", meta.ID)
+	if meta.ID != "tt1375666" {
+		t.Errorf("expected id tt1375666, got %s", meta.ID)
 	}
 	if meta.Name != "Inception" {
 		t.Errorf("expected name Inception, got %s", meta.Name)
@@ -44,6 +46,15 @@ func TestTMDBResultToMeta_Movie(t *testing.T) {
 	if meta.Description != "Great sci-fi\n\nA mind-bending thriller." {
 		t.Errorf("unexpected description: %s", meta.Description)
 	}
+	if len(meta.Genres) != 2 {
+		t.Fatalf("expected 2 genres, got %d", len(meta.Genres))
+	}
+	if meta.Genres[0] != "Sci-Fi" || meta.Genres[1] != "Action" {
+		t.Errorf("expected [Sci-Fi Action], got %v", meta.Genres)
+	}
+	if len(meta.Links) != 1 || meta.Links[0].Category != "imdb" {
+		t.Errorf("expected IMDB link, got %v", meta.Links)
+	}
 }
 
 func TestTMDBResultToMeta_TV(t *testing.T) {
@@ -58,6 +69,9 @@ func TestTMDBResultToMeta_TV(t *testing.T) {
 
 	if meta.Type != "series" {
 		t.Errorf("expected type series for TV, got %s", meta.Type)
+	}
+	if meta.ID != "tmdb:456" {
+		t.Errorf("expected tmdb:456 (no IMDB ID), got %s", meta.ID)
 	}
 }
 
@@ -134,5 +148,47 @@ func TestTMDBResultToMeta_OverviewOnly(t *testing.T) {
 
 	if meta.Description != "Interesting plot." {
 		t.Errorf("expected overview only, got %s", meta.Description)
+	}
+}
+
+func TestTMDBResultToMeta_FallbackToTMDBId(t *testing.T) {
+	r := tmdb.SearchResult{
+		ID:        999,
+		Title:     "No IMDB",
+		MediaType: "movie",
+	}
+
+	meta := TMDBResultToMeta(r, "")
+
+	if meta.ID != "tmdb:999" {
+		t.Errorf("expected tmdb:999 fallback, got %s", meta.ID)
+	}
+	if len(meta.Links) != 0 {
+		t.Errorf("expected no links without IMDB ID, got %d", len(meta.Links))
+	}
+}
+
+func TestTMDBResultToMeta_GenresAndLinks(t *testing.T) {
+	r := tmdb.SearchResult{
+		ID:        200,
+		Title:     "Genre Test",
+		MediaType: "movie",
+		IMDBId:    "tt0000200",
+		GenreIDs:  []int{18, 53},
+	}
+
+	meta := TMDBResultToMeta(r, "")
+
+	if len(meta.Genres) != 2 {
+		t.Fatalf("expected 2 genres, got %d", len(meta.Genres))
+	}
+	if meta.Genres[0] != "Drama" || meta.Genres[1] != "Thriller" {
+		t.Errorf("expected [Drama Thriller], got %v", meta.Genres)
+	}
+	if len(meta.Links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(meta.Links))
+	}
+	if meta.Links[0].URL != "https://www.imdb.com/title/tt0000200/" {
+		t.Errorf("unexpected link URL: %s", meta.Links[0].URL)
 	}
 }

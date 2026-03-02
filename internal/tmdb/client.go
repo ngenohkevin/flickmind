@@ -109,6 +109,22 @@ func (c *Client) DiscoverMovies(ctx context.Context, params url.Values) ([]tmdbM
 	return resp.Results, nil
 }
 
+func (c *Client) GetExternalIDs(ctx context.Context, tmdbID int, mediaType string) (string, error) {
+	path := fmt.Sprintf("/%s/%d/external_ids", mediaType, tmdbID)
+	data, err := c.get(ctx, path, nil)
+	if err != nil {
+		return "", err
+	}
+
+	var resp struct {
+		IMDBId string `json:"imdb_id"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", err
+	}
+	return resp.IMDBId, nil
+}
+
 func (c *Client) DiscoverTV(ctx context.Context, params url.Values) ([]tmdbTVResult, error) {
 	data, err := c.get(ctx, "/discover/tv", params)
 	if err != nil {

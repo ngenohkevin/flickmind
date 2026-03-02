@@ -12,6 +12,8 @@ type SearchResult struct {
 	Year         int     `json:"year"`
 	GenreIDs     []int   `json:"genre_ids"`
 	Popularity   float64 `json:"popularity"`
+	IMDBId       string  `json:"imdb_id,omitempty"`
+	Reason       string  `json:"-"` // AI recommendation reason, not serialized
 }
 
 type tmdbMovieResult struct {

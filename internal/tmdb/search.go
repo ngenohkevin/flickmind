@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,33 +14,37 @@ import (
 )
 
 func (c *Client) FindInTMDB(ctx context.Context, rec ai.Recommendation) *SearchResult {
+	var result *SearchResult
+
 	// Search movies
 	if rec.Type == "movie" || rec.Type == "anime" {
-		if result := c.searchMovieWithRetry(ctx, rec.Title, rec.Year); result != nil {
-			return result
-		}
+		result = c.searchMovieWithRetry(ctx, rec.Title, rec.Year)
 	}
 
 	// Search TV
-	if rec.Type == "series" || rec.Type == "anime" {
-		if result := c.searchTVWithRetry(ctx, rec.Title, rec.Year); result != nil {
-			return result
-		}
+	if result == nil && (rec.Type == "series" || rec.Type == "anime") {
+		result = c.searchTVWithRetry(ctx, rec.Title, rec.Year)
 	}
 
 	// If type was movie but no results, try TV (and vice versa)
-	if rec.Type == "movie" {
-		if result := c.searchTVWithRetry(ctx, rec.Title, rec.Year); result != nil {
-			return result
-		}
-	} else if rec.Type == "series" {
-		if result := c.searchMovieWithRetry(ctx, rec.Title, rec.Year); result != nil {
-			return result
-		}
+	if result == nil && rec.Type == "movie" {
+		result = c.searchTVWithRetry(ctx, rec.Title, rec.Year)
+	} else if result == nil && rec.Type == "series" {
+		result = c.searchMovieWithRetry(ctx, rec.Title, rec.Year)
 	}
 
-	log.Printf("[TMDB] Could not find: %q (%d)", rec.Title, rec.Year)
-	return nil
+	if result == nil {
+		log.Printf("[TMDB] Could not find: %q (%d)", rec.Title, rec.Year)
+		return nil
+	}
+
+	// Fetch IMDB ID (non-fatal on error)
+	imdbID, err := c.GetExternalIDs(ctx, result.ID, result.MediaType)
+	if err == nil && imdbID != "" {
+		result.IMDBId = imdbID
+	}
+
+	return result
 }
 
 func (c *Client) searchMovieWithRetry(ctx context.Context, title string, year int) *SearchResult {
@@ -113,7 +118,7 @@ func (c *Client) EnrichRecommendations(ctx context.Context, recs []ai.Recommenda
 
 			result := c.FindInTMDB(ctx, r)
 			if result != nil {
-				result.Overview = r.Reason + "\n\n" + result.Overview
+				result.Reason = r.Reason
 				mu.Lock()
 				results = append(results, indexedResult{idx, result})
 				mu.Unlock()
@@ -122,16 +127,18 @@ func (c *Client) EnrichRecommendations(ctx context.Context, recs []ai.Recommenda
 	}
 	wg.Wait()
 
-	// Deduplicate by ID, keep order
+	// Sort by original index to preserve AI ordering
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].index < results[j].index
+	})
+
+	// Deduplicate by ID
 	seen := make(map[int]bool)
 	var enriched []SearchResult
-	// Sort by original index to preserve AI ordering
-	for i := 0; i < len(recs); i++ {
-		for _, r := range results {
-			if r.index == i && !seen[r.result.ID] {
-				seen[r.result.ID] = true
-				enriched = append(enriched, *r.result)
-			}
+	for _, r := range results {
+		if !seen[r.result.ID] {
+			seen[r.result.ID] = true
+			enriched = append(enriched, *r.result)
 		}
 	}
 
@@ -252,6 +259,38 @@ var tvGenreMap = map[string]int{
 	"crime": 80, "documentary": 99, "drama": 18, "fantasy": 10765,
 	"mystery": 9648, "sci-fi": 10765, "science fiction": 10765,
 	"war": 10768,
+}
+
+// Reverse maps: TMDB genre ID → display name
+var movieGenreIDToName = map[int]string{
+	28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy",
+	80: "Crime", 99: "Documentary", 18: "Drama", 14: "Fantasy",
+	27: "Horror", 9648: "Mystery", 10749: "Romance", 878: "Sci-Fi",
+	53: "Thriller", 10752: "War", 36: "History", 10402: "Music",
+	10751: "Family", 37: "Western",
+}
+
+var tvGenreIDToName = map[int]string{
+	10759: "Action & Adventure", 16: "Animation", 35: "Comedy",
+	80: "Crime", 99: "Documentary", 18: "Drama", 10765: "Sci-Fi & Fantasy",
+	9648: "Mystery", 10768: "War & Politics", 10762: "Kids",
+	10763: "News", 10764: "Reality", 10766: "Soap", 10767: "Talk",
+	37: "Western",
+}
+
+// GenreIDsToNames converts TMDB genre IDs to human-readable names.
+func GenreIDsToNames(ids []int, mediaType string) []string {
+	m := movieGenreIDToName
+	if mediaType == "tv" {
+		m = tvGenreIDToName
+	}
+	var names []string
+	for _, id := range ids {
+		if name, ok := m[id]; ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func mapGenreNamesToIDs(names []string, mediaType string) []string {

@@ -21,6 +21,12 @@ type traktHistoryItem struct {
 	Show      *traktShow  `json:"show,omitempty"`
 }
 
+type traktWatchlistItem struct {
+	Type  string      `json:"type"`
+	Movie *traktMovie `json:"movie,omitempty"`
+	Show  *traktShow  `json:"show,omitempty"`
+}
+
 type traktMovie struct {
 	Title string `json:"title"`
 	Year  int    `json:"year"`

@@ -117,6 +117,36 @@ func BuildHiddenGemsPrompt(cfg *store.UserConfig, watchHistory []string, mediaTy
 	return strings.Join(parts, "\n")
 }
 
+func BuildWatchlistPicksPrompt(cfg *store.UserConfig, watchlistTitles []string, watchHistory []string, mediaType string) string {
+	var parts []string
+	parts = append(parts, buildSystemPrompt(cfg.MaxResults, mediaType))
+
+	parts = append(parts, fmt.Sprintf("\nUSER'S WATCHLIST (titles they saved to watch later): %s", strings.Join(watchlistTitles, ", ")))
+	parts = append(parts, "Analyze the patterns in their watchlist (genres, themes, directors, tone).")
+	parts = append(parts, fmt.Sprintf("Recommend %d NEW titles they haven't added yet but would love based on their taste.", cfg.MaxResults))
+	parts = append(parts, "Do NOT recommend titles already in their watchlist.")
+
+	if cfg.Mood != "" {
+		parts = append(parts, fmt.Sprintf("MOOD: %s", cfg.Mood))
+	}
+	if cfg.Language != "" && cfg.Language != "en" {
+		parts = append(parts, fmt.Sprintf("PREFERRED LANGUAGE: %s", cfg.Language))
+	}
+	if cfg.MinRating > 0 {
+		parts = append(parts, fmt.Sprintf("MINIMUM RATING: %.1f/10", cfg.MinRating))
+	}
+	if len(cfg.ContentTypes) > 0 {
+		parts = append(parts, fmt.Sprintf("CONTENT TYPES: %s only", strings.Join(cfg.ContentTypes, ", ")))
+	}
+	parts = appendYearRange(parts, cfg)
+
+	if len(watchHistory) > 0 {
+		parts = append(parts, fmt.Sprintf("\nALREADY WATCHED (also exclude these): %s", strings.Join(watchHistory, ", ")))
+	}
+
+	return strings.Join(parts, "\n")
+}
+
 func BuildBecauseYouWatchedPrompt(recentTitle string, cfg *store.UserConfig, mediaType string) string {
 	var parts []string
 	parts = append(parts, buildSystemPrompt(cfg.MaxResults, mediaType))

@@ -32,7 +32,7 @@ func newMockStore() *mockStore {
 
 func (m *mockStore) CreateUser(_ context.Context, id string) error {
 	m.users[id] = true
-	m.configs[id] = &store.UserConfig{UserID: id, Language: "en", ContentTypes: []string{"movie", "series"}}
+	m.configs[id] = &store.UserConfig{UserID: id, Language: "en", ContentTypes: []string{"movie", "series"}, RecommendationSource: "preferences"}
 	return nil
 }
 

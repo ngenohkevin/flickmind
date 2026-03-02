@@ -26,17 +26,18 @@ func (s *Server) handleHealth(c *gin.Context) {
 // Config API
 
 type configRequest struct {
-	GroqKey      string   `json:"groqKey"`
-	DeepSeekKey  string   `json:"deepseekKey"`
-	GeminiKey    string   `json:"geminiKey"`
-	Genres       []string `json:"genres"`
-	ContentTypes []string `json:"contentTypes"`
-	Language     string   `json:"language"`
-	Mood         string   `json:"mood"`
-	MinRating    float64  `json:"minRating"`
-	YearFrom     int      `json:"yearFrom"`
-	YearTo       int      `json:"yearTo"`
-	MaxResults   int      `json:"maxResults"`
+	GroqKey              string   `json:"groqKey"`
+	DeepSeekKey          string   `json:"deepseekKey"`
+	GeminiKey            string   `json:"geminiKey"`
+	Genres               []string `json:"genres"`
+	ContentTypes         []string `json:"contentTypes"`
+	Language             string   `json:"language"`
+	Mood                 string   `json:"mood"`
+	MinRating            float64  `json:"minRating"`
+	YearFrom             int      `json:"yearFrom"`
+	YearTo               int      `json:"yearTo"`
+	MaxResults           int      `json:"maxResults"`
+	RecommendationSource string   `json:"recommendationSource"`
 }
 
 func (s *Server) handleCreateConfig(c *gin.Context) {
@@ -59,19 +60,25 @@ func (s *Server) handleCreateConfig(c *gin.Context) {
 		maxResults = 25
 	}
 
+	recSource := req.RecommendationSource
+	if recSource == "" {
+		recSource = "preferences"
+	}
+
 	cfg := &store.UserConfig{
-		UserID:       userID,
-		GroqKey:      req.GroqKey,
-		DeepSeekKey:  req.DeepSeekKey,
-		GeminiKey:    req.GeminiKey,
-		Genres:       req.Genres,
-		ContentTypes: req.ContentTypes,
-		Language:     req.Language,
-		Mood:         req.Mood,
-		MinRating:    req.MinRating,
-		YearFrom:     req.YearFrom,
-		YearTo:       req.YearTo,
-		MaxResults:   maxResults,
+		UserID:               userID,
+		GroqKey:              req.GroqKey,
+		DeepSeekKey:          req.DeepSeekKey,
+		GeminiKey:            req.GeminiKey,
+		Genres:               req.Genres,
+		ContentTypes:         req.ContentTypes,
+		Language:             req.Language,
+		Mood:                 req.Mood,
+		MinRating:            req.MinRating,
+		YearFrom:             req.YearFrom,
+		YearTo:               req.YearTo,
+		MaxResults:           maxResults,
+		RecommendationSource: recSource,
 	}
 
 	if err := s.store.SaveUserConfig(c.Request.Context(), cfg); err != nil {
@@ -97,20 +104,21 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{
-		"userId":         cfg.UserID,
-		"groqKey":        maskKey(cfg.GroqKey),
-		"deepseekKey":    maskKey(cfg.DeepSeekKey),
-		"geminiKey":      maskKey(cfg.GeminiKey),
-		"traktConnected": cfg.TraktConnected,
-		"genres":         cfg.Genres,
-		"contentTypes":   cfg.ContentTypes,
-		"language":       cfg.Language,
-		"mood":           cfg.Mood,
-		"minRating":      cfg.MinRating,
-		"yearFrom":       cfg.YearFrom,
-		"yearTo":         cfg.YearTo,
-		"maxResults":     cfg.MaxResults,
-		"hasTrakt":       s.cfg.TraktClientID != "",
+		"userId":               cfg.UserID,
+		"groqKey":              maskKey(cfg.GroqKey),
+		"deepseekKey":          maskKey(cfg.DeepSeekKey),
+		"geminiKey":            maskKey(cfg.GeminiKey),
+		"traktConnected":       cfg.TraktConnected,
+		"genres":               cfg.Genres,
+		"contentTypes":         cfg.ContentTypes,
+		"language":             cfg.Language,
+		"mood":                 cfg.Mood,
+		"minRating":            cfg.MinRating,
+		"yearFrom":             cfg.YearFrom,
+		"yearTo":               cfg.YearTo,
+		"maxResults":           cfg.MaxResults,
+		"recommendationSource": cfg.RecommendationSource,
+		"hasTrakt":             s.cfg.TraktClientID != "",
 	})
 }
 
@@ -155,6 +163,9 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 	existing.YearTo = req.YearTo
 	if req.MaxResults > 0 {
 		existing.MaxResults = req.MaxResults
+	}
+	if req.RecommendationSource != "" {
+		existing.RecommendationSource = req.RecommendationSource
 	}
 
 	if err := s.store.SaveUserConfig(c.Request.Context(), existing); err != nil {
@@ -298,6 +309,10 @@ func (s *Server) handleCatalog(c *gin.Context) {
 }
 
 func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
+	if cfg.RecommendationSource == "watchlist" && cfg.TraktConnected && s.traktClient != nil {
+		return s.getWatchlistPicks(ctx, cfg, mediaType)
+	}
+
 	var watchHistory []string
 	if cfg.TraktConnected && s.traktClient != nil {
 		watchHistory = s.fetchWatchHistory(ctx, cfg)
@@ -313,6 +328,35 @@ func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaTyp
 			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
 		}
 		log.Printf("[AI Picks] AI failed: %v, falling back to TMDB", err)
+	}
+
+	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
+	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
+}
+
+func (s *Server) getWatchlistPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
+	watchlistTitles := s.fetchWatchlist(ctx, cfg)
+	if len(watchlistTitles) == 0 {
+		log.Printf("[Watchlist Picks] No watchlist items, falling back to preference-based")
+		cfg.RecommendationSource = "preferences"
+		return s.getAIPicks(ctx, cfg, mediaType)
+	}
+
+	var watchHistory []string
+	if cfg.TraktConnected {
+		watchHistory = s.fetchWatchHistory(ctx, cfg)
+	}
+
+	prompt := ai.BuildWatchlistPicksPrompt(cfg, watchlistTitles, watchHistory, mediaType)
+	providers := s.buildProviderChain(cfg)
+
+	if len(providers) > 0 {
+		result, err := ai.GetRecommendations(ctx, providers, prompt)
+		if err == nil {
+			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
+			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
+		}
+		log.Printf("[Watchlist Picks] AI failed: %v, falling back to TMDB", err)
 	}
 
 	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
@@ -414,6 +458,38 @@ func (s *Server) fetchWatchHistory(ctx context.Context, cfg *store.UserConfig) [
 	return titles
 }
 
+func (s *Server) fetchWatchlist(ctx context.Context, cfg *store.UserConfig) []string {
+	if s.traktClient == nil || cfg.TraktAccessToken == "" {
+		return nil
+	}
+
+	if cfg.TraktExpiresAt != nil && time.Now().After(*cfg.TraktExpiresAt) {
+		redirectURI := s.cfg.BaseURL + "/api/trakt/callback"
+		tokenResp, err := s.traktClient.RefreshToken(ctx, cfg.TraktRefreshToken, redirectURI)
+		if err != nil {
+			log.Printf("[Trakt] Token refresh failed: %v", err)
+			return nil
+		}
+		expiresAt := trakt.TokenExpiresAt(tokenResp)
+		if err := s.store.SaveTraktTokens(ctx, cfg.UserID, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt); err != nil {
+			log.Printf("[Trakt] Failed to save refreshed tokens: %v", err)
+		}
+		cfg.TraktAccessToken = tokenResp.AccessToken
+	}
+
+	items, err := s.traktClient.GetWatchlist(ctx, cfg.TraktAccessToken, 50)
+	if err != nil {
+		log.Printf("[Trakt] Watchlist fetch failed: %v", err)
+		return nil
+	}
+
+	var titles []string
+	for _, item := range items {
+		titles = append(titles, fmt.Sprintf("%s (%d)", item.Title, item.Year))
+	}
+	return titles
+}
+
 func filterByType(results []tmdb.SearchResult, mediaType string) []stremio.Meta {
 	var metas []stremio.Meta
 	for _, r := range results {
@@ -422,7 +498,7 @@ func filterByType(results []tmdb.SearchResult, mediaType string) []stremio.Meta 
 			stremioType = "series"
 		}
 		if stremioType == mediaType || mediaType == "" {
-			metas = append(metas, stremio.TMDBResultToMeta(r, ""))
+			metas = append(metas, stremio.TMDBResultToMeta(r, r.Reason))
 		}
 	}
 	if metas == nil {

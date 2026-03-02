@@ -10,22 +10,23 @@ import (
 )
 
 type UserConfig struct {
-	UserID            string     `json:"userId"`
-	GroqKey           string     `json:"groqKey,omitempty"`
-	DeepSeekKey       string     `json:"deepseekKey,omitempty"`
-	GeminiKey         string     `json:"geminiKey,omitempty"`
-	TraktAccessToken  string     `json:"-"`
-	TraktRefreshToken string     `json:"-"`
-	TraktExpiresAt    *time.Time `json:"-"`
-	TraktConnected    bool       `json:"traktConnected"`
-	Genres            []string   `json:"genres"`
-	ContentTypes      []string   `json:"contentTypes"`
-	Language          string     `json:"language"`
-	Mood              string     `json:"mood"`
-	MinRating         float64    `json:"minRating"`
-	YearFrom          int        `json:"yearFrom"`
-	YearTo            int        `json:"yearTo"`
-	MaxResults        int        `json:"maxResults"`
+	UserID               string     `json:"userId"`
+	GroqKey              string     `json:"groqKey,omitempty"`
+	DeepSeekKey          string     `json:"deepseekKey,omitempty"`
+	GeminiKey            string     `json:"geminiKey,omitempty"`
+	TraktAccessToken     string     `json:"-"`
+	TraktRefreshToken    string     `json:"-"`
+	TraktExpiresAt       *time.Time `json:"-"`
+	TraktConnected       bool       `json:"traktConnected"`
+	Genres               []string   `json:"genres"`
+	ContentTypes         []string   `json:"contentTypes"`
+	Language             string     `json:"language"`
+	Mood                 string     `json:"mood"`
+	MinRating            float64    `json:"minRating"`
+	YearFrom             int        `json:"yearFrom"`
+	YearTo               int        `json:"yearTo"`
+	MaxResults           int        `json:"maxResults"`
+	RecommendationSource string     `json:"recommendationSource"`
 }
 
 type Store struct {
@@ -67,12 +68,12 @@ func (s *Store) GetUserConfig(ctx context.Context, userID string) (*UserConfig, 
 		SELECT groq_key, deepseek_key, gemini_key,
 		       trakt_access_token, trakt_refresh_token, trakt_expires_at,
 		       genres, content_types, language, mood, min_rating,
-		       year_from, year_to, max_results
+		       year_from, year_to, max_results, recommendation_source
 		FROM user_config WHERE user_id = $1`, userID).Scan(
 		&cfg.GroqKey, &cfg.DeepSeekKey, &cfg.GeminiKey,
 		&cfg.TraktAccessToken, &cfg.TraktRefreshToken, &traktExpiresAt,
 		&genres, &contentTypes, &cfg.Language, &cfg.Mood, &cfg.MinRating,
-		&cfg.YearFrom, &cfg.YearTo, &cfg.MaxResults,
+		&cfg.YearFrom, &cfg.YearTo, &cfg.MaxResults, &cfg.RecommendationSource,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -88,6 +89,9 @@ func (s *Store) GetUserConfig(ctx context.Context, userID string) (*UserConfig, 
 	if cfg.MaxResults <= 0 {
 		cfg.MaxResults = 25
 	}
+	if cfg.RecommendationSource == "" {
+		cfg.RecommendationSource = "preferences"
+	}
 
 	return cfg, nil
 }
@@ -97,12 +101,12 @@ func (s *Store) SaveUserConfig(ctx context.Context, cfg *UserConfig) error {
 		UPDATE user_config SET
 		    groq_key = $1, deepseek_key = $2, gemini_key = $3,
 		    genres = $4, content_types = $5, language = $6, mood = $7, min_rating = $8,
-		    year_from = $9, year_to = $10, max_results = $11,
+		    year_from = $9, year_to = $10, max_results = $11, recommendation_source = $12,
 		    updated_at = NOW()
-		WHERE user_id = $12`,
+		WHERE user_id = $13`,
 		cfg.GroqKey, cfg.DeepSeekKey, cfg.GeminiKey,
 		joinCSV(cfg.Genres), joinCSV(cfg.ContentTypes), cfg.Language, cfg.Mood, cfg.MinRating,
-		cfg.YearFrom, cfg.YearTo, cfg.MaxResults,
+		cfg.YearFrom, cfg.YearTo, cfg.MaxResults, cfg.RecommendationSource,
 		cfg.UserID,
 	)
 	return err
