@@ -294,6 +294,11 @@ func (s *Server) handleCatalog(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 110*time.Second)
 	defer cancel()
 
+	// Limit concurrent AI calls per user to avoid provider rate limits.
+	// Placed after cache check so cached responses return immediately.
+	s.aiSem.acquire(userID)
+	defer s.aiSem.release(userID)
+
 	var metas []stremio.Meta
 
 	switch catalogID {

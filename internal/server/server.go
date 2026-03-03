@@ -18,6 +18,7 @@ type Server struct {
 	traktClient *trakt.Client
 	cache       *cache.Cache
 	router      *gin.Engine
+	aiSem       *userSemaphore
 }
 
 func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
@@ -28,6 +29,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 		store:      store.New(pool),
 		tmdbClient: tmdb.NewClient(cfg.TMDBAPIKey),
 		cache:      cache.New(cfg.RedisURL),
+		aiSem:      newUserSemaphore(2), // max 2 concurrent AI calls per user
 	}
 
 	if cfg.TraktClientID != "" && cfg.TraktClientSecret != "" {
@@ -47,6 +49,7 @@ func NewForTest(cfg *config.Config, st store.StoreInterface, tmdbClient *tmdb.Cl
 		tmdbClient:  tmdbClient,
 		traktClient: traktClient,
 		cache:       c,
+		aiSem:       newUserSemaphore(2),
 	}
 
 	s.router = s.setupRouter()
