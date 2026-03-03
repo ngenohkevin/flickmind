@@ -7,55 +7,54 @@ import (
 	"github.com/ngenohkevin/flickmind/internal/store"
 )
 
-func hasFlexibleContentType(contentTypes []string) bool {
-	for _, ct := range contentTypes {
-		if ct == "anime" || ct == "documentary" {
-			return true
-		}
-	}
-	return false
-}
-
 // contentTypesForMediaType filters content types to match the requested Stremio media type.
-// When flexible types (anime/documentary) are present, all types pass through.
+// Anime/documentary are always included as they represent focus areas, not Stremio types.
 func contentTypesForMediaType(contentTypes []string, mediaType string) []string {
-	if hasFlexibleContentType(contentTypes) {
-		return contentTypes
-	}
-	// Filter to only the relevant type to avoid contradicting the type instruction
-	switch mediaType {
-	case "movie":
-		for _, ct := range contentTypes {
-			if ct == "movie" {
-				return []string{"movie"}
+	var filtered []string
+	for _, ct := range contentTypes {
+		switch ct {
+		case "anime", "documentary":
+			// Always include focus types — they guide AI content, not Stremio type
+			filtered = append(filtered, ct)
+		case "movie":
+			if mediaType == "movie" || mediaType == "" {
+				filtered = append(filtered, ct)
 			}
-		}
-	case "series":
-		for _, ct := range contentTypes {
-			if ct == "series" {
-				return []string{"series"}
+		case "series":
+			if mediaType == "series" || mediaType == "" {
+				filtered = append(filtered, ct)
 			}
 		}
 	}
-	return contentTypes
+	return filtered
 }
 
 func buildSystemPrompt(maxResults int, mediaType string, contentTypes []string) string {
+	// Always strict type based on mediaType
 	typeInstruction := "movies or TV shows"
-	if hasFlexibleContentType(contentTypes) {
-		typeInstruction = "movies and TV series (both types welcome, especially anime series and documentary series)"
-	} else if mediaType == "movie" {
+	if mediaType == "movie" {
 		typeInstruction = "movies only (no TV series)"
 	} else if mediaType == "series" {
 		typeInstruction = "TV series only (no movies)"
 	}
 
-	return fmt.Sprintf(`Recommend exactly %d titles (%s). Only real, released titles. Diversify by director/country/tone.
+	// Add content focus for anime/documentary
+	var focus string
+	for _, ct := range contentTypes {
+		if ct == "anime" {
+			focus += " Focus on anime/animated content."
+		}
+		if ct == "documentary" {
+			focus += " Focus on documentaries."
+		}
+	}
+
+	return fmt.Sprintf(`Recommend exactly %d titles (%s).%s Only real, released titles. Diversify by director/country/tone.
 
 Types: movie, series, anime (Japanese animation, movie or series).
 
 Return ONLY a JSON array, no markdown:
-[{"title":"Exact Title","year":2020,"type":"movie","reason":"Why this matches"}]`, maxResults, typeInstruction)
+[{"title":"Exact Title","year":2020,"type":"movie","reason":"Why this matches"}]`, maxResults, typeInstruction, focus)
 }
 
 func appendYearRange(parts []string, cfg *store.UserConfig) []string {

@@ -77,6 +77,7 @@ func (s *Server) setupRouter() *gin.Engine {
 	// Stremio endpoints
 	router.GET("/:userId/manifest.json", s.handleManifest)
 	router.GET("/:userId/catalog/:type/:id", s.handleCatalog)
+	router.GET("/:userId/catalog/:type/:id/*extra", s.handleCatalog)
 	router.GET("/:userId/configure", s.handleConfigureRedirect)
 
 	return router

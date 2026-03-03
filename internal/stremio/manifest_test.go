@@ -123,7 +123,28 @@ func TestBuildManifest_DocumentaryShowsBothTypes(t *testing.T) {
 	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
 
 	if len(m.Types) != 2 || m.Types[0] != "movie" || m.Types[1] != "series" {
-		t.Errorf("documentary should map to both movie and series types, got %v", m.Types)
+		t.Errorf("documentary alone should default to both types, got %v", m.Types)
+	}
+}
+
+func TestBuildManifest_MovieAndAnimeOnlyShowsMovie(t *testing.T) {
+	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"movie", "anime"}}
+	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
+
+	if len(m.Types) != 1 || m.Types[0] != "movie" {
+		t.Errorf("movie+anime should only produce movie type, got %v", m.Types)
+	}
+	if len(m.Catalogs) != 2 {
+		t.Errorf("expected 2 catalogs for movie+anime, got %d", len(m.Catalogs))
+	}
+}
+
+func TestBuildManifest_SeriesAndDocumentaryOnlyShowsSeries(t *testing.T) {
+	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"series", "documentary"}}
+	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
+
+	if len(m.Types) != 1 || m.Types[0] != "series" {
+		t.Errorf("series+documentary should only produce series type, got %v", m.Types)
 	}
 }
 

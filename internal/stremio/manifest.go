@@ -4,20 +4,27 @@ import "github.com/ngenohkevin/flickmind/internal/store"
 
 func BuildManifest(baseURL, frontendURL, userID string, cfg *store.UserConfig) Manifest {
 	// Determine which Stremio types to show based on user's content type preferences.
-	// "anime" maps to both movie and series in Stremio (no native anime type).
+	// Only explicit "movie"/"series" selections control the catalog types.
+	// "anime" and "documentary" are content focus areas — they affect AI prompts,
+	// not which Stremio catalog types appear.
 	showMovie := false
 	showSeries := false
+	hasExplicitType := false
 	if cfg != nil && len(cfg.ContentTypes) > 0 {
 		for _, ct := range cfg.ContentTypes {
 			switch ct {
 			case "movie":
 				showMovie = true
+				hasExplicitType = true
 			case "series":
 				showSeries = true
-			case "anime", "documentary":
-				showMovie = true
-				showSeries = true
+				hasExplicitType = true
 			}
+		}
+		// If only anime/documentary selected (no explicit movie/series), default to both
+		if !hasExplicitType {
+			showMovie = true
+			showSeries = true
 		}
 	} else {
 		showMovie = true

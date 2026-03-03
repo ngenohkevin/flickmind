@@ -119,12 +119,23 @@ func normalizeRecommendation(item map[string]interface{}) *Recommendation {
 		reason = "Recommended based on your preferences"
 	}
 
+	// Strip parenthetical year from title (e.g., "The Witcher (2019)" → "The Witcher")
+	// TMDB searches the title literally, so parentheses cause search failures
+	cleanTitle := stripParenYear(title)
+
 	return &Recommendation{
-		Title:  strings.TrimSpace(title),
+		Title:  strings.TrimSpace(cleanTitle),
 		Year:   year,
 		Type:   mediaType,
 		Reason: strings.TrimSpace(reason),
 	}
+}
+
+// stripParenYear removes trailing parenthetical year from title, e.g. "Title (2019)" → "Title"
+var parenYearRe = regexp.MustCompile(`\s*\(\d{4}\)\s*$`)
+
+func stripParenYear(title string) string {
+	return parenYearRe.ReplaceAllString(title, "")
 }
 
 func firstString(m map[string]interface{}, keys ...string) string {
@@ -146,5 +157,16 @@ func tryFixJSON(text string) string {
 	// Remove control characters
 	ctrlRe := regexp.MustCompile(`[\x00-\x1f\x7f]`)
 	fixed = ctrlRe.ReplaceAllString(fixed, " ")
+
+	// Handle truncated JSON (token limit cut off mid-response)
+	// Find the last complete object and close the array
+	if strings.HasPrefix(fixed, "[") && !strings.HasSuffix(strings.TrimSpace(fixed), "]") {
+		// Find the last complete JSON object (last "}")
+		lastBrace := strings.LastIndex(fixed, "}")
+		if lastBrace > 0 {
+			fixed = fixed[:lastBrace+1] + "]"
+		}
+	}
+
 	return fixed
 }

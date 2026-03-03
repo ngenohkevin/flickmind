@@ -338,13 +338,13 @@ func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaTyp
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType, cfg.ContentTypes), cfg.MaxResults)
+			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
 		}
 		log.Printf("[AI Picks] AI failed: %v, falling back to TMDB", err)
 	}
 
 	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType, nil), cfg.MaxResults)
+	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
 }
 
 func (s *Server) getWatchlistPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -367,13 +367,13 @@ func (s *Server) getWatchlistPicks(ctx context.Context, cfg *store.UserConfig, m
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType, cfg.ContentTypes), cfg.MaxResults)
+			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
 		}
 		log.Printf("[Watchlist Picks] AI failed: %v, falling back to TMDB", err)
 	}
 
 	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType, nil), cfg.MaxResults)
+	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
 }
 
 func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -389,13 +389,13 @@ func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, media
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType, cfg.ContentTypes), cfg.MaxResults)
+			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
 		}
 		log.Printf("[Hidden Gems] AI failed: %v, falling back to TMDB", err)
 	}
 
 	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, 7.0, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType, nil), cfg.MaxResults)
+	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
 }
 
 func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -415,7 +415,7 @@ func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig
 		result, err := ai.GetRecommendations(ctx, providers, prompt)
 		if err == nil {
 			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType, cfg.ContentTypes), cfg.MaxResults)
+			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
 		}
 		log.Printf("[Because You Watched] AI failed: %v", err)
 	}
@@ -503,24 +503,14 @@ func (s *Server) fetchWatchlist(ctx context.Context, cfg *store.UserConfig) []st
 	return titles
 }
 
-func hasFlexibleContentType(contentTypes []string) bool {
-	for _, ct := range contentTypes {
-		if ct == "anime" || ct == "documentary" {
-			return true
-		}
-	}
-	return false
-}
-
-func filterByType(results []tmdb.SearchResult, mediaType string, contentTypes []string) []stremio.Meta {
-	flexible := hasFlexibleContentType(contentTypes)
+func filterByType(results []tmdb.SearchResult, mediaType string) []stremio.Meta {
 	var metas []stremio.Meta
 	for _, r := range results {
 		stremioType := "movie"
 		if r.MediaType == "tv" {
 			stremioType = "series"
 		}
-		if flexible || stremioType == mediaType || mediaType == "" {
+		if stremioType == mediaType || mediaType == "" {
 			metas = append(metas, stremio.TMDBResultToMeta(r, r.Reason))
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 )
 
@@ -101,6 +102,7 @@ func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommend
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
@@ -109,6 +111,10 @@ func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommend
 
 	if len(result.Choices) == 0 || result.Choices[0].Message.Content == "" {
 		return nil, fmt.Errorf("%s returned empty response", cfg.Provider)
+	}
+
+	if result.Choices[0].FinishReason == "length" {
+		log.Printf("[%s] WARNING: response truncated (hit max_tokens=%d)", cfg.Provider, maxTokens)
 	}
 
 	recs := ParseAIResponse(result.Choices[0].Message.Content, cfg.Provider)
