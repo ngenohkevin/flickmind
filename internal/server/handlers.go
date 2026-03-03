@@ -446,8 +446,15 @@ func (s *Server) getFocusedPicks(ctx context.Context, cfg *store.UserConfig, foc
 		log.Printf("[%s Picks] AI failed: %v, falling back to TMDB", focusType, err)
 	}
 
-	// Fallback: discover movies (TMDB doesn't have a mixed endpoint)
-	results := s.tmdbClient.DiscoverFallback(ctx, "movie", cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
+	// Fallback: discover with focus-appropriate genre filter
+	fallbackGenres := cfg.Genres
+	switch focusType {
+	case "anime":
+		fallbackGenres = []string{"Animation"}
+	case "documentary":
+		fallbackGenres = []string{"Documentary"}
+	}
+	results := s.tmdbClient.DiscoverFallback(ctx, "", fallbackGenres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
 	return limitResults(filterByType(results, ""), cfg.MaxResults)
 }
 
