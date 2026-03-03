@@ -29,6 +29,7 @@ func ParseAIResponse(text, providerName string) []Recommendation {
 	if strings.HasPrefix(cleaned, "{") {
 		var wrapper map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(cleaned), &wrapper); err == nil {
+			// Try known wrapper keys first
 			for _, key := range []string{"recommendations", "results", "movies", "shows", "data", "items", "output", "suggestions", "titles", "list"} {
 				if raw, ok := wrapper[key]; ok {
 					var arr []json.RawMessage
@@ -46,6 +47,21 @@ func ParseAIResponse(text, providerName string) []Recommendation {
 						cleaned = string(raw)
 						break
 					}
+				}
+			}
+			// Fallback: collect all object values into an array
+			// Handles {"title1": {obj}, "title2": {obj}, ...} format
+			if strings.HasPrefix(cleaned, "{") {
+				var objects []json.RawMessage
+				for _, raw := range wrapper {
+					trimmed := strings.TrimSpace(string(raw))
+					if strings.HasPrefix(trimmed, "{") {
+						objects = append(objects, raw)
+					}
+				}
+				if len(objects) > 0 {
+					arrJSON, _ := json.Marshal(objects)
+					cleaned = string(arrJSON)
 				}
 			}
 		}

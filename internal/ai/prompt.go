@@ -49,12 +49,16 @@ func buildSystemPrompt(maxResults int, mediaType string, contentTypes []string) 
 		}
 	}
 
+	// Use matching example type so the model doesn't get confused
+	exampleType := "movie"
+	if mediaType == "series" {
+		exampleType = "series"
+	}
+
 	return fmt.Sprintf(`Recommend exactly %d titles (%s).%s Only real, released titles. Diversify by director/country/tone.
 
-Types: movie, series, anime (Japanese animation, movie or series).
-
 Return ONLY a JSON array, no markdown:
-[{"title":"Exact Title","year":2020,"type":"movie","reason":"Why this matches"}]`, maxResults, typeInstruction, focus)
+[{"title":"Exact Title","year":2020,"type":"%s","reason":"Why this matches"}]`, maxResults, typeInstruction, focus, exampleType)
 }
 
 func appendYearRange(parts []string, cfg *store.UserConfig) []string {
