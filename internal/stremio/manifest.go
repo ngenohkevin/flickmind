@@ -54,6 +54,18 @@ func BuildManifest(baseURL, frontendURL, userID string, cfg *store.UserConfig) M
 		}
 	}
 
+	// Add dedicated focus catalogs (single row each, mixed movie+series)
+	if cfg != nil {
+		for _, ct := range cfg.ContentTypes {
+			if ct == "anime" {
+				catalogs = append(catalogs, CatalogDef{Type: "movie", ID: "flickmind-anime", Name: "FlickMind: Anime"})
+			}
+			if ct == "documentary" {
+				catalogs = append(catalogs, CatalogDef{Type: "movie", ID: "flickmind-documentary", Name: "FlickMind: Documentaries"})
+			}
+		}
+	}
+
 	if cfg != nil && cfg.TraktConnected {
 		for _, t := range types {
 			catalogs = append(catalogs, CatalogDef{Type: t, ID: "flickmind-because-you-watched", Name: "FlickMind: Because You Watched"})

@@ -82,15 +82,22 @@ func TestBuildManifest_NilConfig(t *testing.T) {
 	}
 }
 
-func TestBuildManifest_AnimeOnlyShowsBothTypes(t *testing.T) {
+func TestBuildManifest_AnimeOnlyShowsBothTypesAndDedicatedCatalog(t *testing.T) {
 	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"anime"}}
 	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
 
 	if len(m.Types) != 2 || m.Types[0] != "movie" || m.Types[1] != "series" {
 		t.Errorf("anime should map to both movie and series types, got %v", m.Types)
 	}
-	if len(m.Catalogs) != 4 {
-		t.Errorf("expected 4 catalogs for anime, got %d", len(m.Catalogs))
+	// 4 base catalogs + 1 dedicated anime catalog
+	if len(m.Catalogs) != 5 {
+		t.Fatalf("expected 5 catalogs for anime (4 base + 1 anime), got %d", len(m.Catalogs))
+	}
+	if m.Catalogs[4].ID != "flickmind-anime" {
+		t.Errorf("expected flickmind-anime catalog at index 4, got %s", m.Catalogs[4].ID)
+	}
+	if m.Catalogs[4].Type != "movie" {
+		t.Errorf("anime catalog should use type 'movie', got %s", m.Catalogs[4].Type)
 	}
 }
 
@@ -118,33 +125,67 @@ func TestBuildManifest_SeriesOnly(t *testing.T) {
 	}
 }
 
-func TestBuildManifest_DocumentaryShowsBothTypes(t *testing.T) {
+func TestBuildManifest_DocumentaryShowsBothTypesAndDedicatedCatalog(t *testing.T) {
 	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"documentary"}}
 	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
 
 	if len(m.Types) != 2 || m.Types[0] != "movie" || m.Types[1] != "series" {
 		t.Errorf("documentary alone should default to both types, got %v", m.Types)
 	}
+	// 4 base catalogs + 1 dedicated documentary catalog
+	if len(m.Catalogs) != 5 {
+		t.Fatalf("expected 5 catalogs for documentary (4 base + 1 doc), got %d", len(m.Catalogs))
+	}
+	if m.Catalogs[4].ID != "flickmind-documentary" {
+		t.Errorf("expected flickmind-documentary catalog at index 4, got %s", m.Catalogs[4].ID)
+	}
 }
 
-func TestBuildManifest_MovieAndAnimeOnlyShowsMovie(t *testing.T) {
+func TestBuildManifest_MovieAndAnimeShowsMovieAndDedicatedAnime(t *testing.T) {
 	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"movie", "anime"}}
 	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
 
 	if len(m.Types) != 1 || m.Types[0] != "movie" {
 		t.Errorf("movie+anime should only produce movie type, got %v", m.Types)
 	}
-	if len(m.Catalogs) != 2 {
-		t.Errorf("expected 2 catalogs for movie+anime, got %d", len(m.Catalogs))
+	// 2 base movie catalogs + 1 dedicated anime catalog
+	if len(m.Catalogs) != 3 {
+		t.Fatalf("expected 3 catalogs for movie+anime (2 base + 1 anime), got %d", len(m.Catalogs))
+	}
+	if m.Catalogs[2].ID != "flickmind-anime" {
+		t.Errorf("expected flickmind-anime catalog at index 2, got %s", m.Catalogs[2].ID)
 	}
 }
 
-func TestBuildManifest_SeriesAndDocumentaryOnlyShowsSeries(t *testing.T) {
+func TestBuildManifest_SeriesAndDocumentaryShowsSeriesAndDedicatedDoc(t *testing.T) {
 	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"series", "documentary"}}
 	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
 
 	if len(m.Types) != 1 || m.Types[0] != "series" {
 		t.Errorf("series+documentary should only produce series type, got %v", m.Types)
+	}
+	// 2 base series catalogs + 1 dedicated documentary catalog
+	if len(m.Catalogs) != 3 {
+		t.Fatalf("expected 3 catalogs for series+documentary, got %d", len(m.Catalogs))
+	}
+	if m.Catalogs[2].ID != "flickmind-documentary" {
+		t.Errorf("expected flickmind-documentary at index 2, got %s", m.Catalogs[2].ID)
+	}
+}
+
+func TestBuildManifest_AllContentTypes(t *testing.T) {
+	cfg := &store.UserConfig{UserID: "abc123", ContentTypes: []string{"movie", "series", "anime", "documentary"}}
+	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
+
+	// 4 base catalogs (2 types x 2 catalog IDs) + 1 anime + 1 documentary = 6
+	if len(m.Catalogs) != 6 {
+		t.Fatalf("expected 6 catalogs for all types, got %d", len(m.Catalogs))
+	}
+	if m.Catalogs[4].ID != "flickmind-anime" {
+		t.Errorf("expected flickmind-anime at index 4, got %s", m.Catalogs[4].ID)
+	}
+	if m.Catalogs[5].ID != "flickmind-documentary" {
+		t.Errorf("expected flickmind-documentary at index 5, got %s", m.Catalogs[5].ID)
 	}
 }
 

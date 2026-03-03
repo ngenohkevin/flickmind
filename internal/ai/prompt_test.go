@@ -203,6 +203,61 @@ func TestBuildHiddenGemsPrompt_YearRange(t *testing.T) {
 	}
 }
 
+func TestBuildFocusedPrompt_Anime(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
+	prompt := BuildFocusedPrompt(cfg, nil, "", "anime")
+
+	if !strings.Contains(prompt, "anime") {
+		t.Error("anime focused prompt should mention anime")
+	}
+	if !strings.Contains(prompt, "no live-action") {
+		t.Error("anime focused prompt should exclude live-action")
+	}
+	if !strings.Contains(prompt, "movies and TV series") {
+		t.Error("focused prompt should ask for both types")
+	}
+}
+
+func TestBuildFocusedPrompt_Documentary(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
+	prompt := BuildFocusedPrompt(cfg, nil, "", "documentary")
+
+	if !strings.Contains(prompt, "documentary") {
+		t.Error("documentary focused prompt should mention documentary")
+	}
+	if !strings.Contains(prompt, "no fiction") {
+		t.Error("documentary focused prompt should exclude fiction")
+	}
+}
+
+func TestBuildFocusedPrompt_WithWatchHistory(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
+	history := []string{"Spirited Away (2001)"}
+	prompt := BuildFocusedPrompt(cfg, history, "", "anime")
+
+	if !strings.Contains(prompt, "Spirited Away (2001)") {
+		t.Error("focused prompt should include watch history")
+	}
+	if !strings.Contains(prompt, "RECENTLY WATCHED") {
+		t.Error("focused prompt should reference recently watched")
+	}
+}
+
+func TestBuildAIPicksPrompt_NoAnimeDocFocusInBase(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{
+		Language:     "en",
+		ContentTypes: []string{"movie", "anime", "documentary"},
+	})
+	prompt := BuildAIPicksPrompt(cfg, nil, "movie")
+
+	if strings.Contains(prompt, "anime") {
+		t.Error("base AI picks prompt should NOT contain anime focus")
+	}
+	if strings.Contains(prompt, "documentary") {
+		t.Error("base AI picks prompt should NOT contain documentary focus")
+	}
+}
+
 func TestBuildBecauseYouWatchedPrompt_YearRange(t *testing.T) {
 	cfg := cfgWithDefaults(&store.UserConfig{Language: "en", YearFrom: 2000, YearTo: 2010})
 	prompt := BuildBecauseYouWatchedPrompt("Inception (2010)", cfg, "movie")

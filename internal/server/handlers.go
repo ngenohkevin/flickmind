@@ -303,6 +303,10 @@ func (s *Server) handleCatalog(c *gin.Context) {
 		metas = s.getHiddenGems(ctx, cfg, mediaType)
 	case "flickmind-because-you-watched":
 		metas = s.getBecauseYouWatched(ctx, cfg, mediaType)
+	case "flickmind-anime":
+		metas = s.getFocusedPicks(ctx, cfg, "anime")
+	case "flickmind-documentary":
+		metas = s.getFocusedPicks(ctx, cfg, "documentary")
 	default:
 		c.JSON(200, stremio.CatalogResponse{Metas: []stremio.Meta{}})
 		return
@@ -421,6 +425,30 @@ func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig
 	}
 
 	return nil
+}
+
+func (s *Server) getFocusedPicks(ctx context.Context, cfg *store.UserConfig, focusType string) []stremio.Meta {
+	var watchHistory []string
+	if cfg.TraktConnected && s.traktClient != nil {
+		watchHistory = s.fetchWatchHistory(ctx, cfg)
+	}
+
+	prompt := ai.BuildFocusedPrompt(cfg, watchHistory, "", focusType)
+	providers := s.buildProviderChain(cfg)
+
+	if len(providers) > 0 {
+		result, err := ai.GetRecommendations(ctx, providers, prompt)
+		if err == nil {
+			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
+			// Pass "" as mediaType to allow both movies and series through
+			return limitResults(filterByType(enriched, ""), cfg.MaxResults)
+		}
+		log.Printf("[%s Picks] AI failed: %v, falling back to TMDB", focusType, err)
+	}
+
+	// Fallback: discover movies (TMDB doesn't have a mixed endpoint)
+	results := s.tmdbClient.DiscoverFallback(ctx, "movie", cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
+	return limitResults(filterByType(results, ""), cfg.MaxResults)
 }
 
 func (s *Server) buildProviderChain(cfg *store.UserConfig) []ai.ProviderEntry {
