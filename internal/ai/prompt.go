@@ -57,8 +57,8 @@ func buildSystemPrompt(maxResults int, mediaType string, contentTypes []string) 
 
 	return fmt.Sprintf(`Recommend exactly %d titles (%s).%s Only real, released titles. Diversify by director/country/tone.
 
-Return ONLY a JSON array, no markdown:
-[{"title":"Exact Title","year":2020,"type":"%s","reason":"Why this matches"}]`, maxResults, typeInstruction, focus, exampleType)
+Return ONLY valid JSON, no markdown:
+{"recommendations":[{"title":"Exact Title","year":2020,"type":"%s","reason":"Why this matches"}]}`, maxResults, typeInstruction, focus, exampleType)
 }
 
 func appendYearRange(parts []string, cfg *store.UserConfig) []string {

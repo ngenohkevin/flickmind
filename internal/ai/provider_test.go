@@ -220,7 +220,7 @@ func TestIsNonRetriable(t *testing.T) {
 		{"insufficient balance", true},
 		{"server error", false},
 		{"timeout", false},
-		{"rate limited", true},
+		{"rate limited", false},
 	}
 
 	for _, tt := range tests {

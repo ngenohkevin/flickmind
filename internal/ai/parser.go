@@ -67,12 +67,12 @@ func ParseAIResponse(text, providerName string) []Recommendation {
 		}
 	}
 
-	// Step 4: Parse JSON
-	var parsed []map[string]interface{}
-	if err := json.Unmarshal([]byte(cleaned), &parsed); err != nil {
-		// Step 5: Try to fix common JSON issues
-		fixed := tryFixJSON(cleaned)
-		if err2 := json.Unmarshal([]byte(fixed), &parsed); err2 != nil {
+	// Step 4: Parse JSON — use []json.RawMessage to tolerate mixed element types
+	text4 := cleaned
+	var rawItems []json.RawMessage
+	if err := json.Unmarshal([]byte(text4), &rawItems); err != nil {
+		fixed := tryFixJSON(text4)
+		if err2 := json.Unmarshal([]byte(fixed), &rawItems); err2 != nil {
 			log.Printf("[%s] Failed to parse response: %v", providerName, err)
 			if len(text) > 500 {
 				log.Printf("[%s] Raw text: %s...", providerName, text[:500])
@@ -81,16 +81,20 @@ func ParseAIResponse(text, providerName string) []Recommendation {
 		}
 	}
 
-	// Step 6: Normalize each recommendation
+	// Step 5: Normalize each recommendation, skipping non-object elements
 	var recs []Recommendation
-	for _, item := range parsed {
+	for _, raw := range rawItems {
+		var item map[string]interface{}
+		if json.Unmarshal(raw, &item) != nil {
+			continue // skip arrays, strings, or other non-object elements
+		}
 		if rec := normalizeRecommendation(item); rec != nil {
 			recs = append(recs, *rec)
 		}
 	}
 
-	if len(recs) == 0 && len(parsed) > 0 {
-		log.Printf("[%s] Parsed %d items but none were valid", providerName, len(parsed))
+	if len(recs) == 0 && len(rawItems) > 0 {
+		log.Printf("[%s] Parsed %d items but none were valid", providerName, len(rawItems))
 	}
 
 	return recs

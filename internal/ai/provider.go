@@ -122,9 +122,12 @@ func isNonRetriable(err error) bool {
 	return strings.Contains(msg, "not configured") ||
 		strings.Contains(msg, "api key") ||
 		strings.Contains(msg, "insufficient balance") ||
-		strings.Contains(msg, "invalid api key") ||
-		strings.Contains(msg, "rate limit") ||
-		strings.Contains(msg, "429")
+		strings.Contains(msg, "invalid api key")
+}
+
+func isRateLimit(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "rate limit") || strings.Contains(msg, "429")
 }
 
 func withRetry(ctx context.Context, fn func() ([]Recommendation, error), providerName string) ([]Recommendation, error) {
@@ -143,6 +146,11 @@ func withRetry(ctx context.Context, fn func() ([]Recommendation, error), provide
 			return nil, err
 		}
 
+		// Rate limits get a longer delay to let the window reset
+		if isRateLimit(err) {
+			delay = 3 * time.Second
+		}
+
 		if attempt < maxRetries {
 			log.Printf("[%s] Attempt %d failed, retrying in %v...", providerName, attempt+1, delay)
 			select {
@@ -151,8 +159,8 @@ func withRetry(ctx context.Context, fn func() ([]Recommendation, error), provide
 			case <-time.After(delay):
 			}
 			delay = time.Duration(float64(delay) * math.Pow(2, 1))
-			if delay > 3*time.Second {
-				delay = 3 * time.Second
+			if delay > 5*time.Second {
+				delay = 5 * time.Second
 			}
 		}
 	}
