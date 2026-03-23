@@ -144,6 +144,10 @@ func BuildWatchlistPicksPrompt(cfg *store.UserConfig, watchlistTitles []string, 
 	parts = append(parts, fmt.Sprintf("Recommend %d NEW titles they haven't added yet but would love based on their taste.", requestCount))
 	parts = append(parts, "Do NOT recommend titles already in their watchlist.")
 
+	if len(cfg.Genres) > 0 {
+		parts = append(parts, fmt.Sprintf("\nPREFERRED GENRES (stick to these): %s", strings.Join(cfg.Genres, ", ")))
+		parts = append(parts, "IMPORTANT: Only recommend titles that fit within the preferred genres above. Do NOT recommend genres outside this list (e.g., if Horror is not listed, do not recommend horror titles).")
+	}
 	if cfg.Mood != "" {
 		parts = append(parts, fmt.Sprintf("MOOD: %s", cfg.Mood))
 	}

@@ -498,7 +498,7 @@ func (s *Server) fetchWatchHistory(ctx context.Context, cfg *store.UserConfig) [
 		cfg.TraktAccessToken = tokenResp.AccessToken
 	}
 
-	items, err := s.traktClient.GetWatchHistory(ctx, cfg.TraktAccessToken, 20)
+	items, err := s.traktClient.GetWatchHistory(ctx, cfg.TraktAccessToken, 50)
 	if err != nil {
 		log.Printf("[Trakt] Watch history failed: %v", err)
 		return nil
