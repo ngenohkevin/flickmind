@@ -15,13 +15,18 @@ type GroqProvider struct{}
 func (g *GroqProvider) Name() string { return "groq" }
 
 func (g *GroqProvider) GetRecommendations(ctx context.Context, apiKey, prompt string) ([]Recommendation, error) {
+	// gpt-oss is a reasoning model. Low effort keeps output ~1.5K tokens.
+	// Groq counts max_tokens against the free tier's 8K tokens/min up front,
+	// so a smaller cap lets two catalog requests through per minute instead of one.
 	return openAICompatibleRequest(ctx, openAIConfig{
-		URL:      "https://api.groq.com/openai/v1/chat/completions",
-		Model:    "llama-3.1-8b-instant",
-		APIKey:   apiKey,
-		Prompt:   prompt,
-		Provider: "groq",
-		JSONMode: true,
+		URL:             "https://api.groq.com/openai/v1/chat/completions",
+		Model:           "openai/gpt-oss-120b",
+		APIKey:          apiKey,
+		Prompt:          prompt,
+		Provider:        "groq",
+		MaxTokens:       3000,
+		JSONMode:        true,
+		ReasoningEffort: "low",
 	})
 }
 
@@ -41,16 +46,17 @@ func (d *DeepSeekProvider) GetRecommendations(ctx context.Context, apiKey, promp
 }
 
 type openAIConfig struct {
-	URL       string
-	Model     string
-	APIKey    string
-	Prompt    string
-	Provider  string
-	MaxTokens int
-	JSONMode  bool
+	URL             string
+	Model           string
+	APIKey          string
+	Prompt          string
+	Provider        string
+	MaxTokens       int
+	JSONMode        bool
+	ReasoningEffort string
 }
 
-func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommendation, error) {
+func buildOpenAIBody(cfg openAIConfig) map[string]interface{} {
 	maxTokens := cfg.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 4000
@@ -69,8 +75,20 @@ func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommend
 	if cfg.JSONMode {
 		body["response_format"] = map[string]string{"type": "json_object"}
 	}
+	if cfg.ReasoningEffort != "" {
+		body["reasoning_effort"] = cfg.ReasoningEffort
+	}
 
-	bodyJSON, err := json.Marshal(body)
+	return body
+}
+
+func openAICompatibleRequest(ctx context.Context, cfg openAIConfig) ([]Recommendation, error) {
+	maxTokens := cfg.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4000
+	}
+
+	bodyJSON, err := json.Marshal(buildOpenAIBody(cfg))
 	if err != nil {
 		return nil, err
 	}

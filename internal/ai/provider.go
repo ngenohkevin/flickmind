@@ -122,7 +122,9 @@ func isNonRetriable(err error) bool {
 	return strings.Contains(msg, "not configured") ||
 		strings.Contains(msg, "api key") ||
 		strings.Contains(msg, "insufficient balance") ||
-		strings.Contains(msg, "invalid api key")
+		strings.Contains(msg, "invalid api key") ||
+		strings.Contains(msg, "model_not_found") ||
+		strings.Contains(msg, "model_decommissioned")
 }
 
 func isRateLimit(err error) bool {

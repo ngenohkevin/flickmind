@@ -218,6 +218,8 @@ func TestIsNonRetriable(t *testing.T) {
 		{"invalid api key", true},
 		{"not configured", true},
 		{"insufficient balance", true},
+		{`groq API error 404: {"error":{"code":"model_not_found"}}`, true},
+		{`groq API error 400: {"error":{"code":"model_decommissioned"}}`, true},
 		{"server error", false},
 		{"timeout", false},
 		{"rate limited", false},
