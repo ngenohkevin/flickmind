@@ -87,15 +87,7 @@ func (s *Store) GetUserConfig(ctx context.Context, userID string) (*UserConfig, 
 	cfg.TraktConnected = cfg.TraktAccessToken != ""
 	cfg.Genres = splitCSV(genres)
 	cfg.ContentTypes = splitCSV(contentTypes)
-	if cfg.MaxResults <= 0 {
-		cfg.MaxResults = 25
-	}
-	if cfg.RecommendationSource == "" {
-		cfg.RecommendationSource = "preferences"
-	}
-	if cfg.RefreshInterval == "" {
-		cfg.RefreshInterval = "2h"
-	}
+	NormalizeConfig(cfg)
 
 	return cfg, nil
 }

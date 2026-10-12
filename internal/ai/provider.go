@@ -62,7 +62,7 @@ func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt s
 
 		providerPrompt := prompt
 		if entry.Provider.Name() == "deepseek" {
-			providerPrompt = capPromptTitles(prompt, 25)
+			providerPrompt = capPromptTitles(prompt, deepSeekMaxTitles)
 		}
 
 		providerCtx, cancel := context.WithTimeout(ctx, providerTimeout(entry.Provider.Name()))
@@ -99,6 +99,10 @@ func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt s
 	}
 	return nil, errors.New("no AI providers configured")
 }
+
+// deepSeekMaxTitles caps DeepSeek's request size; it is slower than Groq and
+// only runs as a fallback. Shortfalls are topped up by a second round.
+const deepSeekMaxTitles = 40
 
 var titleCountRe = regexp.MustCompile(`(?i)(recommend(?:\s+exactly)?\s+)(\d+)(\s+(?:NEW\s+)?titles)`)
 
@@ -148,13 +152,14 @@ func withRetry(ctx context.Context, fn func() ([]Recommendation, error), provide
 			return nil, err
 		}
 
-		// Rate limits get a longer delay to let the window reset
+		// A rate limit won't clear within a few seconds (Groq's free tier resets
+		// tokens per minute), so hand over to the next provider instead of waiting.
 		if isRateLimit(err) {
-			delay = 3 * time.Second
+			return nil, err
 		}
 
 		if attempt < maxRetries {
-			log.Printf("[%s] Attempt %d failed, retrying in %v...", providerName, attempt+1, delay)
+			log.Printf("[%s] Attempt %d failed (%.200s), retrying in %v...", providerName, attempt+1, err.Error(), delay)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()

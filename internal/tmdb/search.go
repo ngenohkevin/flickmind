@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+	"unicode"
 
 	"github.com/ngenohkevin/flickmind/internal/ai"
 )
@@ -54,54 +56,133 @@ func (c *Client) FindInTMDB(ctx context.Context, rec ai.Recommendation) *SearchR
 	return result
 }
 
+// candidate is a search hit reduced to what title matching needs.
+type candidate struct {
+	title, original string
+	year, votes     int
+}
+
+// searchMovieWithRetry searches with the AI's year first, then without it
+// (AI years are often off by one), and only accepts a hit whose title matches.
 func (c *Client) searchMovieWithRetry(ctx context.Context, title string, year int) *SearchResult {
-	movies, err := c.SearchMovies(ctx, title, year)
-	if err == nil && len(movies) > 0 {
-		var match *tmdbMovieResult
-		for i := range movies {
-			if extractYear(movies[i].ReleaseDate) == year {
-				match = &movies[i]
-				break
+	pick := func(movies []tmdbMovieResult, tolerance int) *SearchResult {
+		cands := make([]candidate, len(movies))
+		for i, m := range movies {
+			cands[i] = candidate{m.Title, m.OriginalTitle, extractYear(m.ReleaseDate), m.VoteCount}
+		}
+		if i := bestMatch(cands, title, year, tolerance); i >= 0 {
+			return movieToResult(&movies[i])
+		}
+		return nil
+	}
+
+	if year > 0 {
+		if movies, err := c.SearchMovies(ctx, title, year); err == nil {
+			if r := pick(movies, 0); r != nil {
+				return r
 			}
 		}
-		if match == nil {
-			match = &movies[0]
-		}
-		return movieToResult(match)
 	}
-	// Retry without year if AI gave a slightly wrong year
-	if year > 0 {
-		movies, err = c.SearchMovies(ctx, title, 0)
-		if err == nil && len(movies) > 0 {
-			return movieToResult(&movies[0])
-		}
+	if movies, err := c.SearchMovies(ctx, title, 0); err == nil {
+		return pick(movies, 1)
 	}
 	return nil
 }
 
 func (c *Client) searchTVWithRetry(ctx context.Context, title string, year int) *SearchResult {
-	shows, err := c.SearchTV(ctx, title, year)
-	if err == nil && len(shows) > 0 {
-		var match *tmdbTVResult
-		for i := range shows {
-			if extractYear(shows[i].FirstAirDate) == year {
-				match = &shows[i]
-				break
+	pick := func(shows []tmdbTVResult, tolerance int) *SearchResult {
+		cands := make([]candidate, len(shows))
+		for i, sh := range shows {
+			cands[i] = candidate{sh.Name, sh.OriginalName, extractYear(sh.FirstAirDate), sh.VoteCount}
+		}
+		if i := bestMatch(cands, title, year, tolerance); i >= 0 {
+			return tvToResult(&shows[i])
+		}
+		return nil
+	}
+
+	if year > 0 {
+		if shows, err := c.SearchTV(ctx, title, year); err == nil {
+			if r := pick(shows, 0); r != nil {
+				return r
 			}
 		}
-		if match == nil {
-			match = &shows[0]
-		}
-		return tvToResult(match)
 	}
-	// Retry without year if AI gave a slightly wrong year
-	if year > 0 {
-		shows, err = c.SearchTV(ctx, title, 0)
-		if err == nil && len(shows) > 0 {
-			return tvToResult(&shows[0])
-		}
+	if shows, err := c.SearchTV(ctx, title, 0); err == nil {
+		return pick(shows, 1)
 	}
 	return nil
+}
+
+// bestMatch returns the index of the candidate that is really the title the AI
+// meant, or -1. Search results are ranked by popularity, not by title, so
+// taking the first hit returned "Captain Underpants" for "The Captain". A
+// candidate must match the title (or its original-language title); among
+// matches the closest year wins, then the most-voted (two 2013 films are
+// called "Under the Skin"). tolerance is the allowed year difference when the
+// AI gave a year.
+func bestMatch(cands []candidate, title string, year, tolerance int) int {
+	want := normTitle(title)
+	wantBase := normTitle(beforeColon(title))
+	if want == "" {
+		return -1
+	}
+
+	best, bestScore := -1, -1
+	for i, c := range cands {
+		yearDiff := 0
+		if year > 0 {
+			yearDiff = abs(c.year - year)
+			if yearDiff > tolerance {
+				continue
+			}
+		}
+
+		titleScore := 0
+		switch {
+		case normTitle(c.title) == want || normTitle(c.original) == want:
+			titleScore = 2
+		case yearDiff == 0 && (normTitle(beforeColon(c.title)) == want || normTitle(c.title) == wantBase):
+			// "Borat" vs "Borat: Cultural Learnings of America...", same year
+			titleScore = 1
+		default:
+			continue
+		}
+
+		// Title first, then year closeness, then votes as the tiebreaker.
+		score := titleScore*1_000_000_000 + (10-yearDiff)*10_000_000 + min(c.votes, 9_999_999)
+		if score > bestScore {
+			best, bestScore = i, score
+		}
+	}
+	return best
+}
+
+// normTitle lowercases a title and keeps only letters and digits, so
+// punctuation, accents in separators, and "&" vs "and" don't block a match.
+func normTitle(s string) string {
+	s = strings.ReplaceAll(strings.ToLower(s), "&", "and")
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func beforeColon(s string) string {
+	if i := strings.Index(s, ":"); i > 0 {
+		return s[:i]
+	}
+	return s
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func (c *Client) EnrichRecommendations(ctx context.Context, recs []ai.Recommendation) []SearchResult {
@@ -152,49 +233,64 @@ func (c *Client) EnrichRecommendations(ctx context.Context, recs []ai.Recommenda
 	return enriched
 }
 
-// DiscoverFallback returns popular content from TMDB discover when no AI is available
-func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres []string, minRating float64, yearFrom, yearTo int) []SearchResult {
-	params := url.Values{
-		"sort_by":        {"popularity.desc"},
-		"vote_count.gte": {"100"},
-		"include_adult":  {"false"},
-		"language":       {"en-US"},
-	}
-
-	if minRating > 0 {
-		params.Set("vote_average.gte", fmt.Sprintf("%.1f", minRating))
-	}
-
-	genreIDs := mapGenreNamesToIDs(genres, mediaType)
-	if len(genreIDs) > 0 {
-		params.Set("with_genres", strings.Join(genreIDs, "|"))
-	}
-
-	// Apply year range filters
-	if yearFrom > 0 || yearTo > 0 {
-		if mediaType == "series" {
-			if yearFrom > 0 {
-				params.Set("first_air_date.gte", fmt.Sprintf("%d-01-01", yearFrom))
-			}
-			if yearTo > 0 {
-				params.Set("first_air_date.lte", fmt.Sprintf("%d-12-31", yearTo))
-			}
-		} else {
-			if yearFrom > 0 {
-				params.Set("primary_release_date.gte", fmt.Sprintf("%d-01-01", yearFrom))
-			}
-			if yearTo > 0 {
-				params.Set("primary_release_date.lte", fmt.Sprintf("%d-12-31", yearTo))
-			}
+// AttachIMDBIds looks up IMDB IDs for discover results (which don't carry
+// them), so stream addons can resolve the titles.
+func (c *Client) AttachIMDBIds(ctx context.Context, results []SearchResult) {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 16)
+	for i := range results {
+		if results[i].IMDBId != "" {
+			continue
 		}
+		wg.Add(1)
+		go func(r *SearchResult) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			var id string
+			var err error
+			if r.MediaType == "movie" {
+				id, err = c.GetMovieIMDBId(ctx, r.ID)
+			} else {
+				id, err = c.GetExternalIDs(ctx, r.ID, r.MediaType)
+			}
+			if err == nil {
+				r.IMDBId = id
+			}
+		}(&results[i])
 	}
+	wg.Wait()
+}
 
+// NormTitle normalizes a title for comparison (lowercase letters and digits only).
+func NormTitle(s string) string { return normTitle(s) }
+
+// DiscoverOpts narrows the TMDB discover fallback to the user's settings.
+type DiscoverOpts struct {
+	MediaType string // "movie", "series", or "" for both
+	Genres    []string
+	MinRating float64
+	YearFrom  int
+	YearTo    int
+	Language  string // TMDB original language code(s), pipe-separated; "" for any
+	MaxVotes  int    // drop titles with more votes than this (hidden gems); 0 for no cap
+	MinVotes  int    // minimum votes; defaults to 100
+	SortBy    string // TMDB sort order; defaults to popularity.desc
+	// ReleasedBefore, when set, also caps the release date (tighter than YearTo).
+	ReleasedBefore time.Time
+	SkipTVMovies   bool // exclude TMDB's "TV Movie" genre (specials, re-cuts)
+}
+
+// DiscoverFallback returns popular content from TMDB discover when no AI is available
+func (c *Client) DiscoverFallback(ctx context.Context, o DiscoverOpts) []SearchResult {
 	var results []SearchResult
 
-	// TMDB returns 20 results per page; fetch up to 3 pages to fill larger requests
-	maxPages := 3
+	// TMDB returns 20 results per page; the settings filter drops many, so
+	// fetch up to 5 pages to fill larger requests
+	maxPages := 5
 
-	if mediaType == "movie" || mediaType == "" {
+	if o.MediaType == "movie" || o.MediaType == "" {
+		params := discoverParams(o, "movie")
 		for page := 1; page <= maxPages; page++ {
 			params.Set("page", strconv.Itoa(page))
 			movies, err := c.DiscoverMovies(ctx, params)
@@ -207,7 +303,8 @@ func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres 
 		}
 	}
 
-	if mediaType == "series" || mediaType == "" {
+	if o.MediaType == "series" || o.MediaType == "" {
+		params := discoverParams(o, "series")
 		for page := 1; page <= maxPages; page++ {
 			params.Set("page", strconv.Itoa(page))
 			shows, err := c.DiscoverTV(ctx, params)
@@ -223,35 +320,90 @@ func (c *Client) DiscoverFallback(ctx context.Context, mediaType string, genres 
 	return results
 }
 
+// discoverParams builds discover filters for one media type; movie and TV use
+// different genre IDs and date fields.
+func discoverParams(o DiscoverOpts, mediaType string) url.Values {
+	sortBy := o.SortBy
+	if sortBy == "" {
+		sortBy = "popularity.desc"
+	}
+	minVotes := o.MinVotes
+	if minVotes <= 0 {
+		minVotes = 100
+	}
+	params := url.Values{
+		"sort_by":        {sortBy},
+		"vote_count.gte": {strconv.Itoa(minVotes)},
+		"include_adult":  {"false"},
+		"language":       {"en-US"},
+	}
+
+	if o.MaxVotes > 0 {
+		params.Set("vote_count.lte", strconv.Itoa(o.MaxVotes))
+	}
+	if o.MinRating > 0 {
+		params.Set("vote_average.gte", fmt.Sprintf("%.1f", o.MinRating))
+	}
+	if genreIDs := mapGenreNamesToIDs(o.Genres, mediaType); len(genreIDs) > 0 {
+		params.Set("with_genres", strings.Join(genreIDs, "|"))
+	}
+	if o.Language != "" {
+		params.Set("with_original_language", o.Language)
+	}
+	if o.SkipTVMovies && mediaType == "movie" {
+		params.Set("without_genres", "10770")
+	}
+
+	dateField := "primary_release_date"
+	if mediaType == "series" {
+		dateField = "first_air_date"
+	}
+	if o.YearFrom > 0 {
+		params.Set(dateField+".gte", fmt.Sprintf("%d-01-01", o.YearFrom))
+	}
+	if o.YearTo > 0 {
+		params.Set(dateField+".lte", fmt.Sprintf("%d-12-31", o.YearTo))
+	}
+	if !o.ReleasedBefore.IsZero() {
+		before := o.ReleasedBefore.Format("2006-01-02")
+		if cur := params.Get(dateField + ".lte"); cur == "" || before < cur {
+			params.Set(dateField+".lte", before)
+		}
+	}
+	return params
+}
+
 func movieToResult(m *tmdbMovieResult) *SearchResult {
 	return &SearchResult{
-		ID:           m.ID,
-		Title:        m.Title,
-		MediaType:    "movie",
-		PosterPath:   m.PosterPath,
-		BackdropPath: m.BackdropPath,
-		Overview:     m.Overview,
-		VoteAverage:  m.VoteAverage,
-		VoteCount:    m.VoteCount,
-		Year:         extractYear(m.ReleaseDate),
-		GenreIDs:     m.GenreIDs,
-		Popularity:   m.Popularity,
+		ID:               m.ID,
+		Title:            m.Title,
+		OriginalLanguage: m.OriginalLanguage,
+		MediaType:        "movie",
+		PosterPath:       m.PosterPath,
+		BackdropPath:     m.BackdropPath,
+		Overview:         m.Overview,
+		VoteAverage:      m.VoteAverage,
+		VoteCount:        m.VoteCount,
+		Year:             extractYear(m.ReleaseDate),
+		GenreIDs:         m.GenreIDs,
+		Popularity:       m.Popularity,
 	}
 }
 
 func tvToResult(t *tmdbTVResult) *SearchResult {
 	return &SearchResult{
-		ID:           t.ID,
-		Title:        t.Name,
-		MediaType:    "tv",
-		PosterPath:   t.PosterPath,
-		BackdropPath: t.BackdropPath,
-		Overview:     t.Overview,
-		VoteAverage:  t.VoteAverage,
-		VoteCount:    t.VoteCount,
-		Year:         extractYear(t.FirstAirDate),
-		GenreIDs:     t.GenreIDs,
-		Popularity:   t.Popularity,
+		ID:               t.ID,
+		Title:            t.Name,
+		OriginalLanguage: t.OriginalLanguage,
+		MediaType:        "tv",
+		PosterPath:       t.PosterPath,
+		BackdropPath:     t.BackdropPath,
+		Overview:         t.Overview,
+		VoteAverage:      t.VoteAverage,
+		VoteCount:        t.VoteCount,
+		Year:             extractYear(t.FirstAirDate),
+		GenreIDs:         t.GenreIDs,
+		Popularity:       t.Popularity,
 	}
 }
 
@@ -294,6 +446,38 @@ var tvGenreIDToName = map[int]string{
 	9648: "Mystery", 10768: "War & Politics", 10762: "Kids",
 	10763: "News", 10764: "Reality", 10766: "Soap", 10767: "Talk",
 	37: "Western",
+}
+
+// movieConfigGenres and tvConfigGenres map TMDB genre IDs to the lowercase genre names used in
+// user config. TV merges some genres ("Sci-Fi & Fantasy"), so an ID can map
+// to more than one name.
+var movieConfigGenres = map[int][]string{
+	28: {"action"}, 12: {"adventure"}, 16: {"animation"}, 35: {"comedy"},
+	80: {"crime"}, 99: {"documentary"}, 18: {"drama"}, 14: {"fantasy"},
+	27: {"horror"}, 9648: {"mystery"}, 10749: {"romance"}, 878: {"sci-fi"},
+	53: {"thriller"}, 10752: {"war"}, 10751: {"family"}, 10402: {"music"},
+	36: {"history"}, 37: {"western"},
+}
+
+var tvConfigGenres = map[int][]string{
+	10759: {"action", "adventure"}, 16: {"animation"}, 35: {"comedy"},
+	80: {"crime"}, 99: {"documentary"}, 18: {"drama"}, 10765: {"sci-fi", "fantasy"},
+	9648: {"mystery"}, 10768: {"war"}, 10751: {"family"}, 10762: {"kids"},
+	10763: {"news"}, 10764: {"reality"}, 10766: {"soap"}, 10767: {"talk"},
+	37: {"western"},
+}
+
+// ConfigGenres converts TMDB genre IDs to lowercase config genre names.
+func ConfigGenres(ids []int, mediaType string) []string {
+	m := movieConfigGenres
+	if mediaType == "tv" {
+		m = tvConfigGenres
+	}
+	var names []string
+	for _, id := range ids {
+		names = append(names, m[id]...)
+	}
+	return names
 }
 
 // GenreIDsToNames converts TMDB genre IDs to human-readable names.

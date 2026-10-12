@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ngenohkevin/flickmind/internal/ai"
+	"github.com/ngenohkevin/flickmind/internal/prefs"
 	"github.com/ngenohkevin/flickmind/internal/store"
 	"github.com/ngenohkevin/flickmind/internal/stremio"
 	"github.com/ngenohkevin/flickmind/internal/tmdb"
@@ -26,9 +27,11 @@ func (s *Server) handleHealth(c *gin.Context) {
 // Config API
 
 type configRequest struct {
-	GroqKey              string   `json:"groqKey"`
-	DeepSeekKey          string   `json:"deepseekKey"`
-	GeminiKey            string   `json:"geminiKey"`
+	// Keys are pointers so an absent field (keep) differs from "" (provider
+	// switched off on the config page: remove the key).
+	GroqKey              *string  `json:"groqKey"`
+	DeepSeekKey          *string  `json:"deepseekKey"`
+	GeminiKey            *string  `json:"geminiKey"`
 	Genres               []string `json:"genres"`
 	ContentTypes         []string `json:"contentTypes"`
 	Language             string   `json:"language"`
@@ -56,26 +59,11 @@ func (s *Server) handleCreateConfig(c *gin.Context) {
 		return
 	}
 
-	maxResults := req.MaxResults
-	if maxResults <= 0 {
-		maxResults = 25
-	}
-
-	recSource := req.RecommendationSource
-	if recSource == "" {
-		recSource = "preferences"
-	}
-
-	refreshInterval := req.RefreshInterval
-	if refreshInterval == "" {
-		refreshInterval = "2h"
-	}
-
 	cfg := &store.UserConfig{
 		UserID:               userID,
-		GroqKey:              req.GroqKey,
-		DeepSeekKey:          req.DeepSeekKey,
-		GeminiKey:            req.GeminiKey,
+		GroqKey:              mergeKey("", req.GroqKey),
+		DeepSeekKey:          mergeKey("", req.DeepSeekKey),
+		GeminiKey:            mergeKey("", req.GeminiKey),
 		Genres:               req.Genres,
 		ContentTypes:         req.ContentTypes,
 		Language:             req.Language,
@@ -83,10 +71,11 @@ func (s *Server) handleCreateConfig(c *gin.Context) {
 		MinRating:            req.MinRating,
 		YearFrom:             req.YearFrom,
 		YearTo:               req.YearTo,
-		MaxResults:           maxResults,
-		RecommendationSource: recSource,
-		RefreshInterval:      refreshInterval,
+		MaxResults:           req.MaxResults,
+		RecommendationSource: req.RecommendationSource,
+		RefreshInterval:      req.RefreshInterval,
 	}
+	store.NormalizeConfig(cfg)
 
 	if err := s.store.SaveUserConfig(c.Request.Context(), cfg); err != nil {
 		log.Printf("[ERROR] Save config: %v", err)
@@ -151,16 +140,9 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 		return
 	}
 
-	// Only update keys if new value provided (not masked)
-	if req.GroqKey != "" && !strings.HasPrefix(req.GroqKey, "••••") {
-		existing.GroqKey = req.GroqKey
-	}
-	if req.DeepSeekKey != "" && !strings.HasPrefix(req.DeepSeekKey, "••••") {
-		existing.DeepSeekKey = req.DeepSeekKey
-	}
-	if req.GeminiKey != "" && !strings.HasPrefix(req.GeminiKey, "••••") {
-		existing.GeminiKey = req.GeminiKey
-	}
+	existing.GroqKey = mergeKey(existing.GroqKey, req.GroqKey)
+	existing.DeepSeekKey = mergeKey(existing.DeepSeekKey, req.DeepSeekKey)
+	existing.GeminiKey = mergeKey(existing.GeminiKey, req.GeminiKey)
 
 	existing.Genres = req.Genres
 	existing.ContentTypes = req.ContentTypes
@@ -178,6 +160,7 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 	if req.RefreshInterval != "" {
 		existing.RefreshInterval = req.RefreshInterval
 	}
+	store.NormalizeConfig(existing)
 
 	if err := s.store.SaveUserConfig(c.Request.Context(), existing); err != nil {
 		log.Printf("[ERROR] Update config: %v", err)
@@ -263,12 +246,17 @@ func (s *Server) handleManifest(c *gin.Context) {
 	if err != nil {
 		cfg = &store.UserConfig{UserID: userID}
 	}
+	store.NormalizeConfig(cfg)
 
 	manifest := stremio.BuildManifest(s.cfg.BaseURL, s.cfg.FrontendURL, userID, cfg)
 	c.JSON(200, manifest)
 }
 
 // Stremio Catalog
+
+// cacheVersion is part of every catalog cache key; bump it when the pipeline
+// changes so catalogs built by the old logic aren't served after a deploy.
+const cacheVersion = "v2"
 
 func (s *Server) handleCatalog(c *gin.Context) {
 	userID := c.Param("userId")
@@ -277,7 +265,7 @@ func (s *Server) handleCatalog(c *gin.Context) {
 
 	catalogID = strings.TrimSuffix(catalogID, ".json")
 
-	cacheKey := fmt.Sprintf("%s:%s:%s", userID, catalogID, mediaType)
+	cacheKey := fmt.Sprintf("%s:%s:%s:%s", userID, cacheVersion, catalogID, mediaType)
 
 	var cached stremio.CatalogResponse
 	if s.cache.Get(cacheKey, &cached) {
@@ -290,6 +278,7 @@ func (s *Server) handleCatalog(c *gin.Context) {
 		c.JSON(200, stremio.CatalogResponse{Metas: []stremio.Meta{}})
 		return
 	}
+	store.NormalizeConfig(cfg)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 110*time.Second)
 	defer cancel()
@@ -309,9 +298,9 @@ func (s *Server) handleCatalog(c *gin.Context) {
 	case "flickmind-because-you-watched":
 		metas = s.getBecauseYouWatched(ctx, cfg, mediaType)
 	case "flickmind-anime":
-		metas = s.getFocusedPicks(ctx, cfg, "anime")
+		metas = s.getFocusedPicks(ctx, cfg, ai.KindAnime)
 	case "flickmind-documentary":
-		metas = s.getFocusedPicks(ctx, cfg, "documentary")
+		metas = s.getFocusedPicks(ctx, cfg, ai.KindDocumentary)
 	default:
 		c.JSON(200, stremio.CatalogResponse{Metas: []stremio.Meta{}})
 		return
@@ -330,81 +319,40 @@ func (s *Server) handleCatalog(c *gin.Context) {
 	c.JSON(200, resp)
 }
 
-func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
-	if cfg.RecommendationSource == "watchlist" && cfg.TraktConnected && s.traktClient != nil {
-		return s.getWatchlistPicks(ctx, cfg, mediaType)
-	}
-
-	var watchHistory []string
-	if cfg.TraktConnected && s.traktClient != nil {
-		watchHistory = s.fetchWatchHistory(ctx, cfg)
-	}
-
-	prompt := ai.BuildAIPicksPrompt(cfg, watchHistory, mediaType)
-	providers := s.buildProviderChain(cfg)
-
-	if len(providers) > 0 {
-		result, err := ai.GetRecommendations(ctx, providers, prompt)
-		if err == nil {
-			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
-		}
-		log.Printf("[AI Picks] AI failed: %v, falling back to TMDB", err)
-	}
-
-	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
+// catalogRequest describes one catalog build.
+type catalogRequest struct {
+	tag       string
+	kind      ai.PromptKind
+	mediaType string // "movie" or "series"; "" for the mixed anime/documentary rows
+	input     ai.PromptInput
+	blocked   []trakt.WatchedItem // titles never to show: watched, and the watchlist in watchlist mode
+	// discover fills a shortfall (or an AI failure) from TMDB discover.
+	// Because You Watched skips it: popular titles aren't "similar to X".
+	discover bool
 }
 
-func (s *Server) getWatchlistPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
-	watchlistTitles := s.fetchWatchlist(ctx, cfg)
-	if len(watchlistTitles) == 0 {
-		log.Printf("[Watchlist Picks] No watchlist items, falling back to preference-based")
-		cfg.RecommendationSource = "preferences"
-		return s.getAIPicks(ctx, cfg, mediaType)
-	}
+func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
+	history := s.fetchWatchHistory(ctx, cfg)
+	req := catalogRequest{tag: "AI Picks", kind: ai.KindPicks, mediaType: mediaType, blocked: history, discover: true}
+	req.input.WatchHistory = formatTitles(history)
 
-	var watchHistory []string
-	if cfg.TraktConnected {
-		watchHistory = s.fetchWatchHistory(ctx, cfg)
-	}
-
-	prompt := ai.BuildWatchlistPicksPrompt(cfg, watchlistTitles, watchHistory, mediaType)
-	providers := s.buildProviderChain(cfg)
-
-	if len(providers) > 0 {
-		result, err := ai.GetRecommendations(ctx, providers, prompt)
-		if err == nil {
-			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
+	if cfg.RecommendationSource == "watchlist" {
+		if watchlist := s.fetchWatchlist(ctx, cfg); len(watchlist) > 0 {
+			req.tag, req.kind = "Watchlist Picks", ai.KindWatchlist
+			req.input.Watchlist = formatTitles(watchlist)
+			req.blocked = append(req.blocked, watchlist...)
+		} else {
+			log.Printf("[Watchlist Picks] %s: no watchlist available (Trakt connected: %v), using preferences", cfg.UserID, cfg.TraktConnected)
 		}
-		log.Printf("[Watchlist Picks] AI failed: %v, falling back to TMDB", err)
 	}
-
-	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
+	return s.buildCatalog(ctx, cfg, req)
 }
 
 func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
-	var watchHistory []string
-	if cfg.TraktConnected && s.traktClient != nil {
-		watchHistory = s.fetchWatchHistory(ctx, cfg)
-	}
-
-	prompt := ai.BuildHiddenGemsPrompt(cfg, watchHistory, mediaType)
-	providers := s.buildProviderChain(cfg)
-
-	if len(providers) > 0 {
-		result, err := ai.GetRecommendations(ctx, providers, prompt)
-		if err == nil {
-			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
-		}
-		log.Printf("[Hidden Gems] AI failed: %v, falling back to TMDB", err)
-	}
-
-	results := s.tmdbClient.DiscoverFallback(ctx, mediaType, cfg.Genres, 7.0, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, mediaType), cfg.MaxResults)
+	history := s.fetchWatchHistory(ctx, cfg)
+	req := catalogRequest{tag: "Hidden Gems", kind: ai.KindGems, mediaType: mediaType, blocked: history, discover: true}
+	req.input.WatchHistory = formatTitles(history)
+	return s.buildCatalog(ctx, cfg, req)
 }
 
 func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
@@ -412,55 +360,146 @@ func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig
 		return nil
 	}
 
-	watchHistory := s.fetchWatchHistory(ctx, cfg)
-	if len(watchHistory) == 0 {
+	history := s.fetchWatchHistory(ctx, cfg)
+	if len(history) == 0 {
 		return nil
 	}
 
-	prompt := ai.BuildBecauseYouWatchedPrompt(watchHistory[0], cfg, mediaType)
-	providers := s.buildProviderChain(cfg)
-
-	if len(providers) > 0 {
-		result, err := ai.GetRecommendations(ctx, providers, prompt)
-		if err == nil {
-			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			return limitResults(filterByType(enriched, mediaType), cfg.MaxResults)
-		}
-		log.Printf("[Because You Watched] AI failed: %v", err)
-	}
-
-	return nil
+	req := catalogRequest{tag: "Because You Watched", kind: ai.KindBecauseYouWatched, mediaType: mediaType, blocked: history}
+	req.input.SeedTitle = formatTitles(history[:1])[0]
+	return s.buildCatalog(ctx, cfg, req)
 }
 
-func (s *Server) getFocusedPicks(ctx context.Context, cfg *store.UserConfig, focusType string) []stremio.Meta {
-	var watchHistory []string
-	if cfg.TraktConnected && s.traktClient != nil {
-		watchHistory = s.fetchWatchHistory(ctx, cfg)
+func (s *Server) getFocusedPicks(ctx context.Context, cfg *store.UserConfig, kind ai.PromptKind) []stremio.Meta {
+	tag := "Anime Picks"
+	if kind == ai.KindDocumentary {
+		tag = "Documentary Picks"
+	}
+	history := s.fetchWatchHistory(ctx, cfg)
+	req := catalogRequest{tag: tag, kind: kind, blocked: history, discover: true}
+	req.input.WatchHistory = formatTitles(history)
+	return s.buildCatalog(ctx, cfg, req)
+}
+
+// buildCatalog produces up to cfg.MaxResults titles that all honor the
+// user's settings: AI suggestions first (with a second round to cover what the
+// filter dropped), then TMDB discover for any remaining shortfall.
+func (s *Server) buildCatalog(ctx context.Context, cfg *store.UserConfig, req catalogRequest) []stremio.Meta {
+	rules := prefs.For(cfg, ai.RulesKind(req.kind))
+	filter := newResultFilter(rules, allowedTypes(cfg, req.mediaType), req.blocked)
+	want := cfg.MaxResults
+
+	var kept []tmdb.SearchResult
+	if providers := s.buildProviderChain(cfg); len(providers) > 0 {
+		kept = s.aiRounds(ctx, cfg, req, providers, filter, want)
 	}
 
-	prompt := ai.BuildFocusedPrompt(cfg, watchHistory, "", focusType)
-	providers := s.buildProviderChain(cfg)
-
-	if len(providers) > 0 {
-		result, err := ai.GetRecommendations(ctx, providers, prompt)
-		if err == nil {
-			enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
-			// Pass "" as mediaType to allow both movies and series through
-			return limitResults(filterByType(enriched, ""), cfg.MaxResults)
+	if len(kept) < want && req.discover {
+		extra := s.discoverFill(ctx, req, rules, filter)
+		if need := want - len(kept); len(extra) > need {
+			extra = extra[:need]
 		}
-		log.Printf("[%s Picks] AI failed: %v, falling back to TMDB", focusType, err)
+		if len(extra) > 0 {
+			s.tmdbClient.AttachIMDBIds(ctx, extra)
+			log.Printf("[%s %s] filled %d from TMDB discover", req.tag, req.mediaType, len(extra))
+			kept = append(kept, extra...)
+		}
 	}
 
-	// Fallback: discover with focus-appropriate genre filter
-	fallbackGenres := cfg.Genres
-	switch focusType {
-	case "anime":
-		fallbackGenres = []string{"Animation"}
-	case "documentary":
-		fallbackGenres = []string{"Documentary"}
+	return limitResults(filterByType(kept, req.mediaType), want)
+}
+
+// aiRounds asks the AI for titles, enriches them via TMDB and keeps those
+// that pass the filter. A second, smaller round tops up whatever the filter
+// dropped, telling the AI what it already suggested.
+func (s *Server) aiRounds(ctx context.Context, cfg *store.UserConfig, req catalogRequest,
+	providers []ai.ProviderEntry, filter *resultFilter, want int) []tmdb.SearchResult {
+	var kept []tmdb.SearchResult
+	var suggested []string
+
+	for round := 1; round <= 2 && len(kept) < want; round++ {
+		if round > 1 {
+			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < 40*time.Second {
+				break
+			}
+		}
+
+		in := roundInput(req, want-len(kept), suggested)
+		result, err := ai.GetRecommendations(ctx, providers, ai.BuildPrompt(req.kind, cfg, in))
+		if err != nil {
+			log.Printf("[%s %s] round %d: AI failed: %v", req.tag, req.mediaType, round, err)
+			break
+		}
+		for _, r := range result.Recommendations {
+			suggested = append(suggested, fmt.Sprintf("%s (%d)", r.Title, r.Year))
+		}
+
+		enriched := s.tmdbClient.EnrichRecommendations(ctx, result.Recommendations)
+		accepted, summary := filter.apply(enriched)
+		kept = append(kept, accepted...)
+		log.Printf("[%s %s] round %d via %s: %d suggested, %d found on TMDB, %d kept (%s)",
+			req.tag, req.mediaType, round, result.ProviderName, len(result.Recommendations), len(enriched), len(accepted), summary)
+
+		// Most suggestions missing from TMDB means the model is inventing
+		// titles; let the next provider take the top-up round.
+		if len(enriched)*2 < len(result.Recommendations) {
+			providers = demoteProvider(providers, result.ProviderName)
+			log.Printf("[%s %s] %s invented most titles; trying the next provider first", req.tag, req.mediaType, result.ProviderName)
+		}
 	}
-	results := s.tmdbClient.DiscoverFallback(ctx, "", fallbackGenres, cfg.MinRating, cfg.YearFrom, cfg.YearTo)
-	return limitResults(filterByType(results, ""), cfg.MaxResults)
+	return kept
+}
+
+// roundInput builds the prompt input for one AI round: the catalog's own
+// context plus its row type, the count still needed and what was already suggested.
+func roundInput(req catalogRequest, need int, suggested []string) ai.PromptInput {
+	in := req.input
+	in.MediaType = req.mediaType
+	in.Count = ai.OverRequest(need)
+	in.Exclude = suggested
+	return in
+}
+
+// demoteProvider moves the named provider to the end of the chain.
+func demoteProvider(providers []ai.ProviderEntry, name string) []ai.ProviderEntry {
+	var front, back []ai.ProviderEntry
+	for _, p := range providers {
+		if p.Provider.Name() == name {
+			back = append(back, p)
+		} else {
+			front = append(front, p)
+		}
+	}
+	return append(front, back...)
+}
+
+// discoverFill pulls popular TMDB titles that pass the same filter.
+func (s *Server) discoverFill(ctx context.Context, req catalogRequest, rules prefs.Rules, filter *resultFilter) []tmdb.SearchResult {
+	o := tmdb.DiscoverOpts{
+		MediaType: req.mediaType,
+		Genres:    rules.Selected,
+		MinRating: rules.MinRating,
+		YearFrom:  rules.YearFrom,
+		YearTo:    rules.YearTo,
+		Language:  strings.Join(rules.Languages, "|"),
+	}
+	switch req.kind {
+	case ai.KindGems:
+		// Highly rated but little-voted, and old enough that the vote count
+		// means something: recent blockbusters sit under any vote cap for
+		// months. TV movies (specials) are skipped.
+		o.MinRating = max(o.MinRating, 7.0)
+		o.MinVotes = 300
+		o.MaxVotes = 3000
+		o.SortBy = "vote_average.desc"
+		o.ReleasedBefore = time.Now().AddDate(-3, 0, 0)
+		o.SkipTVMovies = true
+	case ai.KindAnime, ai.KindDocumentary:
+		o.Genres = []string{rules.Required}
+	}
+
+	accepted, _ := filter.apply(s.tmdbClient.DiscoverFallback(ctx, o))
+	return accepted
 }
 
 func (s *Server) buildProviderChain(cfg *store.UserConfig) []ai.ProviderEntry {
@@ -477,70 +516,6 @@ func (s *Server) buildProviderChain(cfg *store.UserConfig) []ai.ProviderEntry {
 	}
 
 	return chain
-}
-
-func (s *Server) fetchWatchHistory(ctx context.Context, cfg *store.UserConfig) []string {
-	if s.traktClient == nil || cfg.TraktAccessToken == "" {
-		return nil
-	}
-
-	if cfg.TraktExpiresAt != nil && time.Now().After(*cfg.TraktExpiresAt) {
-		redirectURI := s.cfg.BaseURL + "/api/trakt/callback"
-		tokenResp, err := s.traktClient.RefreshToken(ctx, cfg.TraktRefreshToken, redirectURI)
-		if err != nil {
-			log.Printf("[Trakt] Token refresh failed: %v", err)
-			return nil
-		}
-		expiresAt := trakt.TokenExpiresAt(tokenResp)
-		if err := s.store.SaveTraktTokens(ctx, cfg.UserID, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt); err != nil {
-			log.Printf("[Trakt] Failed to save refreshed tokens: %v", err)
-		}
-		cfg.TraktAccessToken = tokenResp.AccessToken
-	}
-
-	items, err := s.traktClient.GetWatchHistory(ctx, cfg.TraktAccessToken, 50)
-	if err != nil {
-		log.Printf("[Trakt] Watch history failed: %v", err)
-		return nil
-	}
-
-	var titles []string
-	for _, item := range items {
-		titles = append(titles, fmt.Sprintf("%s (%d)", item.Title, item.Year))
-	}
-	return titles
-}
-
-func (s *Server) fetchWatchlist(ctx context.Context, cfg *store.UserConfig) []string {
-	if s.traktClient == nil || cfg.TraktAccessToken == "" {
-		return nil
-	}
-
-	if cfg.TraktExpiresAt != nil && time.Now().After(*cfg.TraktExpiresAt) {
-		redirectURI := s.cfg.BaseURL + "/api/trakt/callback"
-		tokenResp, err := s.traktClient.RefreshToken(ctx, cfg.TraktRefreshToken, redirectURI)
-		if err != nil {
-			log.Printf("[Trakt] Token refresh failed: %v", err)
-			return nil
-		}
-		expiresAt := trakt.TokenExpiresAt(tokenResp)
-		if err := s.store.SaveTraktTokens(ctx, cfg.UserID, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt); err != nil {
-			log.Printf("[Trakt] Failed to save refreshed tokens: %v", err)
-		}
-		cfg.TraktAccessToken = tokenResp.AccessToken
-	}
-
-	items, err := s.traktClient.GetWatchlist(ctx, cfg.TraktAccessToken, 50)
-	if err != nil {
-		log.Printf("[Trakt] Watchlist fetch failed: %v", err)
-		return nil
-	}
-
-	var titles []string
-	for _, item := range items {
-		titles = append(titles, fmt.Sprintf("%s (%d)", item.Title, item.Year))
-	}
-	return titles
 }
 
 func filterByType(results []tmdb.SearchResult, mediaType string) []stremio.Meta {
@@ -565,6 +540,16 @@ func limitResults(metas []stremio.Meta, max int) []stremio.Meta {
 		return metas[:max]
 	}
 	return metas
+}
+
+// mergeKey applies a key from the config page: absent or masked ("••••abcd",
+// the value the page shows for a saved key) keeps the current key, "" removes
+// it (provider switched off), anything else replaces it.
+func mergeKey(current string, incoming *string) string {
+	if incoming == nil || strings.HasPrefix(*incoming, "••••") {
+		return current
+	}
+	return *incoming
 }
 
 func maskKey(key string) string {

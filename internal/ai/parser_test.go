@@ -186,3 +186,23 @@ func TestParseAIResponse_YearAsString(t *testing.T) {
 		t.Errorf("expected 2020, got %d", recs[0].Year)
 	}
 }
+
+func TestCleanText_LookAlikeCharacters(t *testing.T) {
+	if got := cleanText("The Patriot"); got != "The Patriot" {
+		t.Errorf("got %q", got)
+	}
+	if got := cleanText("  sci‑fi​  thriller "); got != "sci-fi thriller" {
+		t.Errorf("got %q", got)
+	}
+	recs := ParseAIResponse(`{"recommendations":[{"title":"191 Days Later","year":2021,"type":"movie","reason":"x"}]}`, "test")
+	if len(recs) != 1 || recs[0].Title != "191 Days Later" {
+		t.Errorf("parsed title = %+v", recs)
+	}
+}
+
+func TestParseAIResponse_DeclinedReturnsNothing(t *testing.T) {
+	recs := ParseAIResponse(`{"error":"Unable to generate a list of 45 distinct movies"}`, "test")
+	if recs != nil {
+		t.Errorf("declined response should yield no recs, got %v", recs)
+	}
+}

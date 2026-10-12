@@ -3,17 +3,22 @@ package trakt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 )
 
-const apiBaseURL = "https://api.trakt.tv"
+const defaultBaseURL = "https://api.trakt.tv"
+
+// ErrUnauthorized means Trakt rejected the access token (expired or revoked).
+var ErrUnauthorized = errors.New("trakt: access token rejected")
 
 type Client struct {
 	clientID     string
 	clientSecret string
+	baseURL      string
 	httpClient   *http.Client
 }
 
@@ -21,12 +26,19 @@ func NewClient(clientID, clientSecret string) *Client {
 	return &Client{
 		clientID:     clientID,
 		clientSecret: clientSecret,
+		baseURL:      defaultBaseURL,
 		httpClient:   &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
+// WithBaseURL points the client at another API host (used by tests).
+func (c *Client) WithBaseURL(u string) *Client {
+	c.baseURL = u
+	return c
+}
+
 func (c *Client) GetWatchlist(ctx context.Context, accessToken string, limit int) ([]WatchedItem, error) {
-	url := fmt.Sprintf("%s/users/me/watchlist/movies,shows?limit=%d", apiBaseURL, limit)
+	url := fmt.Sprintf("%s/users/me/watchlist/movies,shows?limit=%d", c.baseURL, limit)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -43,6 +55,9 @@ func (c *Client) GetWatchlist(ctx context.Context, accessToken string, limit int
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrUnauthorized
+	}
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("trakt API error %d: %s", resp.StatusCode, string(body))
@@ -83,7 +98,7 @@ func (c *Client) GetWatchlist(ctx context.Context, accessToken string, limit int
 }
 
 func (c *Client) GetWatchHistory(ctx context.Context, accessToken string, limit int) ([]WatchedItem, error) {
-	url := fmt.Sprintf("%s/users/me/history?limit=%d", apiBaseURL, limit)
+	url := fmt.Sprintf("%s/users/me/history?limit=%d", c.baseURL, limit)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -100,6 +115,9 @@ func (c *Client) GetWatchHistory(ctx context.Context, accessToken string, limit 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrUnauthorized
+	}
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("trakt API error %d: %s", resp.StatusCode, string(body))

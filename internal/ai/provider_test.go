@@ -258,3 +258,18 @@ func TestWithRetry_SucceedsOnRetry(t *testing.T) {
 		t.Errorf("expected 2 attempts, got %d", attempts)
 	}
 }
+
+func TestWithRetry_RateLimitIsNotRetried(t *testing.T) {
+	attempts := 0
+	_, err := withRetry(context.Background(), func() ([]Recommendation, error) {
+		attempts++
+		return nil, errors.New("groq API error 429: rate limit reached")
+	}, "test")
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Errorf("expected 1 attempt, got %d", attempts)
+	}
+}

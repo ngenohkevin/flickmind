@@ -19,6 +19,7 @@ type Server struct {
 	cache       *cache.Cache
 	router      *gin.Engine
 	aiSem       *userSemaphore
+	traktLocks  traktLocks
 }
 
 func New(cfg *config.Config, pool *pgxpool.Pool) *Server {

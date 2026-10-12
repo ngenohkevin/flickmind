@@ -25,14 +25,15 @@ func TestBuildAIPicksPrompt_IncludesPreferences(t *testing.T) {
 	})
 
 	prompt := BuildAIPicksPrompt(cfg, nil, "movie")
+	lower := strings.ToLower(prompt)
 
-	if !strings.Contains(prompt, "action") {
+	if !strings.Contains(lower, "action") {
 		t.Error("prompt should include genres")
 	}
 	if !strings.Contains(prompt, "exciting") {
 		t.Error("prompt should include mood")
 	}
-	if !strings.Contains(prompt, "fr") {
+	if !strings.Contains(lower, "french") {
 		t.Error("prompt should include language")
 	}
 	if !strings.Contains(prompt, "movie") {
@@ -70,12 +71,75 @@ func TestBuildAIPicksPrompt_WithoutWatchHistory(t *testing.T) {
 	}
 }
 
-func TestBuildAIPicksPrompt_DefaultLanguageNotIncluded(t *testing.T) {
+func TestBuildAIPicksPrompt_EnglishIsEnforced(t *testing.T) {
 	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
 	prompt := BuildAIPicksPrompt(cfg, nil, "movie")
 
-	if strings.Contains(prompt, "PREFERRED LANGUAGE") {
-		t.Error("default language 'en' should not add PREFERRED LANGUAGE line")
+	if !strings.Contains(prompt, "only titles originally in English") {
+		t.Errorf("English should be a hard language rule, got: %s", prompt)
+	}
+}
+
+func TestBuildAIPicksPrompt_AnyLanguageHasNoRule(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: ""})
+	prompt := BuildAIPicksPrompt(cfg, nil, "movie")
+
+	if strings.Contains(prompt, "LANGUAGE:") {
+		t.Error("Any language should not add a language rule")
+	}
+	if !strings.Contains(prompt, "country") {
+		t.Error("Any language should still diversify by country")
+	}
+}
+
+func TestBuildAIPicksPrompt_ExcludesUnselectedGenres(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en", Genres: []string{"Action", "Thriller"}})
+	prompt := BuildAIPicksPrompt(cfg, nil, "movie")
+
+	if !strings.Contains(prompt, "EXCLUDED GENRES") || !strings.Contains(prompt, "Horror") {
+		t.Errorf("unselected Horror should be excluded, got: %s", prompt)
+	}
+	if strings.Contains(prompt, "Drama,") {
+		t.Error("Drama is neutral and should not be excluded")
+	}
+}
+
+func TestBuildBecauseYouWatchedPrompt_HonorsSettings(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en", Genres: []string{"Crime"}, MinRating: 7, YearFrom: 2010})
+	prompt := BuildBecauseYouWatchedPrompt("Sicario (2015)", cfg, "movie")
+
+	for _, want := range []string{"PREFERRED GENRES", "Crime", "MINIMUM RATING: 7.0", "YEAR RANGE: 2010-present", "English"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("because-you-watched prompt missing %q", want)
+		}
+	}
+}
+
+func TestBuildPrompt_CountAndExclude(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
+	prompt := BuildPrompt(KindPicks, cfg, PromptInput{MediaType: "movie", Count: 12, Exclude: []string{"Heat (1995)"}})
+
+	if !strings.Contains(prompt, "Recommend exactly 12 titles") {
+		t.Error("explicit count should be used")
+	}
+	if !strings.Contains(prompt, "ALREADY SUGGESTED (do not repeat): Heat (1995)") {
+		t.Error("exclusions should be listed")
+	}
+}
+
+func TestBuildPrompt_AsksForBestEffort(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en", Genres: []string{"Thriller"}})
+	prompt := BuildHiddenGemsPrompt(cfg, nil, "movie")
+	if !strings.Contains(prompt, "never an error, refusal or apology") {
+		t.Error("prompt should ask for best effort instead of a refusal")
+	}
+}
+
+func TestOverRequest(t *testing.T) {
+	for _, tt := range []struct{ n, want int }{{10, 18}, {30, 45}, {50, 60}} {
+		if got := OverRequest(tt.n); got != tt.want {
+			t.Errorf("OverRequest(%d) = %d, want %d", tt.n, got, tt.want)
+		}
 	}
 }
 
@@ -98,7 +162,7 @@ func TestBuildHiddenGemsPrompt_IncludesGenres(t *testing.T) {
 	})
 
 	prompt := BuildHiddenGemsPrompt(cfg, nil, "series")
-	if !strings.Contains(prompt, "thriller") {
+	if !strings.Contains(strings.ToLower(prompt), "thriller") {
 		t.Error("prompt should include genres")
 	}
 }
@@ -162,8 +226,8 @@ func TestBuildAIPicksPrompt_MaxResults(t *testing.T) {
 	prompt := BuildAIPicksPrompt(cfg, nil, "movie")
 
 	// Over-requests by ~30%: 30 + 9 = 39
-	if !strings.Contains(prompt, "39") {
-		t.Errorf("prompt should include over-requested count (39), got prompt: %s", prompt[:200])
+	if !strings.Contains(prompt, "45") {
+		t.Errorf("prompt should include over-requested count (45), got prompt: %s", prompt[:200])
 	}
 }
 

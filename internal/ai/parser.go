@@ -19,6 +19,15 @@ func ParseAIResponse(text, providerName string) []Recommendation {
 		}
 	}
 
+	// A model that declines answers {"error": "..."}; say so instead of a parse error.
+	var declined struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(cleaned), &declined) == nil && declined.Error != "" {
+		log.Printf("[%s] Model declined: %.300s", providerName, declined.Error)
+		return nil
+	}
+
 	// Step 2: Extract JSON array from mixed content
 	re := regexp.MustCompile(`(?s)\[.*\]`)
 	if m := re.FindString(cleaned); m != "" {
@@ -74,9 +83,7 @@ func ParseAIResponse(text, providerName string) []Recommendation {
 		fixed := tryFixJSON(text4)
 		if err2 := json.Unmarshal([]byte(fixed), &rawItems); err2 != nil {
 			log.Printf("[%s] Failed to parse response: %v", providerName, err)
-			if len(text) > 500 {
-				log.Printf("[%s] Raw text: %s...", providerName, text[:500])
-			}
+			log.Printf("[%s] Raw text: %.500s", providerName, text)
 			return nil
 		}
 	}
@@ -141,14 +148,27 @@ func normalizeRecommendation(item map[string]interface{}) *Recommendation {
 
 	// Strip parenthetical year from title (e.g., "The Witcher (2019)" → "The Witcher")
 	// TMDB searches the title literally, so parentheses cause search failures
-	cleanTitle := stripParenYear(title)
+	cleanTitle := stripParenYear(cleanText(title))
 
 	return &Recommendation{
 		Title:  strings.TrimSpace(cleanTitle),
 		Year:   year,
 		Type:   mediaType,
-		Reason: strings.TrimSpace(reason),
+		Reason: cleanText(reason),
 	}
+}
+
+// typographic look-alikes models emit (gpt-oss writes "The\u00a0Patriot" and
+// "sci\u2011fi"); TMDB search treats them as different characters.
+var textReplacer = strings.NewReplacer(
+	"\u00a0", " ", "\u2007", " ", "\u202f", " ", "\u2009", " ", "\u200a", " ",
+	"\u200b", "", "\u200c", "", "\u200d", "", "\ufeff", "",
+	"\u2010", "-", "\u2011", "-", "\u2012", "-", "\u2013", "-", "\u2014", "-",
+)
+
+// cleanText normalizes look-alike characters and collapses whitespace.
+func cleanText(s string) string {
+	return strings.Join(strings.Fields(textReplacer.Replace(s)), " ")
 }
 
 // stripParenYear removes trailing parenthetical year from title, e.g. "Title (2019)" → "Title"

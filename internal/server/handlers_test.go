@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 // mockStore implements store.StoreInterface with in-memory maps.
 type mockStore struct {
+	mu      sync.Mutex
 	users   map[string]bool
 	configs map[string]*store.UserConfig
 	caches  map[string]string
@@ -40,20 +42,29 @@ func (m *mockStore) UserExists(_ context.Context, id string) (bool, error) {
 	return m.users[id], nil
 }
 
+// GetUserConfig returns a copy, like the Postgres store, so concurrent
+// requests each hold their own (possibly stale) config.
 func (m *mockStore) GetUserConfig(_ context.Context, userID string) (*store.UserConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	cfg, ok := m.configs[userID]
 	if !ok {
 		return nil, fmt.Errorf("not found")
 	}
-	return cfg, nil
+	cp := *cfg
+	return &cp, nil
 }
 
 func (m *mockStore) SaveUserConfig(_ context.Context, cfg *store.UserConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.configs[cfg.UserID] = cfg
 	return nil
 }
 
 func (m *mockStore) SaveTraktTokens(_ context.Context, userID, accessToken, refreshToken string, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if cfg, ok := m.configs[userID]; ok {
 		cfg.TraktAccessToken = accessToken
 		cfg.TraktRefreshToken = refreshToken
@@ -64,6 +75,8 @@ func (m *mockStore) SaveTraktTokens(_ context.Context, userID, accessToken, refr
 }
 
 func (m *mockStore) ClearTraktTokens(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if cfg, ok := m.configs[userID]; ok {
 		cfg.TraktAccessToken = ""
 		cfg.TraktRefreshToken = ""

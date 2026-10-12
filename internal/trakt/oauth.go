@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
 const authorizeURL = "https://trakt.tv/oauth/authorize"
+
+// ErrInvalidGrant means Trakt no longer accepts the refresh token, so the
+// connection can't recover without the user reconnecting.
+var ErrInvalidGrant = errors.New("trakt: refresh token rejected")
 
 func (c *Client) AuthorizeURL(redirectURI, state string) string {
 	return fmt.Sprintf("%s?response_type=code&client_id=%s&redirect_uri=%s&state=%s",
@@ -45,7 +51,7 @@ func (c *Client) tokenRequest(ctx context.Context, body map[string]string) (*Tok
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", apiBaseURL+"/oauth/token", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/oauth/token", bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +69,10 @@ func (c *Client) tokenRequest(ctx context.Context, body map[string]string) (*Tok
 	}
 
 	if resp.StatusCode != 200 {
+		if (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized) &&
+			strings.Contains(string(respBody), "invalid_grant") {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidGrant, string(respBody))
+		}
 		return nil, fmt.Errorf("trakt token error %d: %s", resp.StatusCode, string(respBody))
 	}
 

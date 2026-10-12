@@ -41,7 +41,7 @@ func (d *DeepSeekProvider) GetRecommendations(ctx context.Context, apiKey, promp
 		APIKey:    apiKey,
 		Prompt:    prompt,
 		Provider:  "deepseek",
-		MaxTokens: 2500,
+		MaxTokens: 3000,
 	})
 }
 
