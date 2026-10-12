@@ -2,6 +2,9 @@ package stremio
 
 import "github.com/ngenohkevin/flickmind/internal/store"
 
+// Version is the addon version Stremio/Nuvio show. Bump it with each release.
+const Version = "2.0.0"
+
 func BuildManifest(baseURL, frontendURL, userID string, cfg *store.UserConfig) Manifest {
 	// Determine which Stremio types to show based on user's content type preferences.
 	// Only explicit "movie"/"series" selections control the catalog types.
@@ -74,7 +77,7 @@ func BuildManifest(baseURL, frontendURL, userID string, cfg *store.UserConfig) M
 
 	return Manifest{
 		ID:          "community.flickmind",
-		Version:     "1.0.0",
+		Version:     Version,
 		Name:        "FlickMind",
 		Description: "AI-powered movie & TV recommendations. Personalized picks using Groq, DeepSeek, or Gemini — bring your own API key.",
 		Logo:        frontendURL + "/apple-touch-icon.png",
