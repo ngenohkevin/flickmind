@@ -33,8 +33,8 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 		aiSem:      newUserSemaphore(2), // max 2 concurrent AI calls per user
 	}
 
-	if cfg.TraktClientID != "" && cfg.TraktClientSecret != "" {
-		s.traktClient = trakt.NewClient(cfg.TraktClientID, cfg.TraktClientSecret)
+	if cfg.TraktClientID != "" {
+		s.traktClient = trakt.NewClient(cfg.TraktClientID)
 	}
 
 	s.router = s.setupRouter()

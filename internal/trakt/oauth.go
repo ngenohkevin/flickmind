@@ -3,42 +3,71 @@ package trakt
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
-const authorizeURL = "https://trakt.tv/oauth/authorize"
+// authorizeURL is Trakt's OAuth host since its 2026 auth migration.
+const authorizeURL = "https://auth.trakt.tv/oauth/authorize"
 
 // ErrInvalidGrant means Trakt no longer accepts the refresh token, so the
 // connection can't recover without the user reconnecting.
 var ErrInvalidGrant = errors.New("trakt: refresh token rejected")
 
-func (c *Client) AuthorizeURL(redirectURI, state string) string {
-	return fmt.Sprintf("%s?response_type=code&client_id=%s&redirect_uri=%s&state=%s",
-		authorizeURL, c.clientID, redirectURI, state)
+// NewPKCE returns a fresh code verifier and its S256 code challenge. Trakt
+// signs users in with PKCE; the client secret is deprecated for sign-in.
+func NewPKCE() (verifier, challenge string, err error) {
+	buf := make([]byte, 48)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", err
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(buf) // 64 chars of A-Z a-z 0-9 - _
+	sum := sha256.Sum256([]byte(verifier))
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
-func (c *Client) ExchangeCode(ctx context.Context, code, redirectURI string) (*TokenResponse, error) {
+// AuthorizeURL builds the sign-in URL. state must be a random, single-use
+// value the callback can verify; codeChallenge comes from NewPKCE.
+func (c *Client) AuthorizeURL(redirectURI, state, codeChallenge string) string {
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {c.clientID},
+		"redirect_uri":          {redirectURI},
+		"state":                 {state},
+		"scope":                 {"public offline_access"},
+		"code_challenge":        {codeChallenge},
+		"code_challenge_method": {"S256"},
+	}
+	return authorizeURL + "?" + q.Encode()
+}
+
+// ExchangeCode trades an authorization code for tokens, proving the sign-in
+// with the PKCE code verifier instead of a client secret.
+func (c *Client) ExchangeCode(ctx context.Context, code, redirectURI, codeVerifier string) (*TokenResponse, error) {
 	body := map[string]string{
 		"code":          code,
 		"client_id":     c.clientID,
-		"client_secret": c.clientSecret,
 		"redirect_uri":  redirectURI,
 		"grant_type":    "authorization_code",
+		"code_verifier": codeVerifier,
 	}
 	return c.tokenRequest(ctx, body)
 }
 
+// RefreshToken trades a single-use refresh token for a new token pair.
 func (c *Client) RefreshToken(ctx context.Context, refreshToken, redirectURI string) (*TokenResponse, error) {
 	body := map[string]string{
 		"refresh_token": refreshToken,
 		"client_id":     c.clientID,
-		"client_secret": c.clientSecret,
 		"redirect_uri":  redirectURI,
 		"grant_type":    "refresh_token",
 	}

@@ -16,18 +16,18 @@ const defaultBaseURL = "https://api.trakt.tv"
 var ErrUnauthorized = errors.New("trakt: access token rejected")
 
 type Client struct {
-	clientID     string
-	clientSecret string
-	baseURL      string
-	httpClient   *http.Client
+	clientID   string
+	baseURL    string
+	httpClient *http.Client
 }
 
-func NewClient(clientID, clientSecret string) *Client {
+// NewClient needs only the app's client ID: sign-in uses PKCE, which Trakt
+// requires for new apps instead of a client secret.
+func NewClient(clientID string) *Client {
 	return &Client{
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		baseURL:      defaultBaseURL,
-		httpClient:   &http.Client{Timeout: 15 * time.Second},
+		clientID:   clientID,
+		baseURL:    defaultBaseURL,
+		httpClient: &http.Client{Timeout: 15 * time.Second},
 	}
 }
 

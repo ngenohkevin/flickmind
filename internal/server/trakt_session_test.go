@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -61,7 +64,7 @@ func traktTestServer(t *testing.T, refreshToken string, refreshes *int32) (*Serv
 	ms.configs["u1"].TraktExpiresAt = &expired
 	ms.configs["u1"].TraktConnected = true
 
-	client := trakt.NewClient("id", "secret").WithBaseURL(ts.URL)
+	client := trakt.NewClient("id").WithBaseURL(ts.URL)
 	srv := NewForTest(&config.Config{BaseURL: "http://localhost:7000"}, ms, nil, client, cache.New(""))
 	return srv, ms
 }
@@ -132,5 +135,82 @@ func TestTraktToken_ConcurrentRequestsRefreshOnce(t *testing.T) {
 	}
 	if !ms.configs["u1"].TraktConnected {
 		t.Error("connection should survive concurrent refreshes")
+	}
+}
+
+func TestTraktSignIn_PKCERoundTrip(t *testing.T) {
+	var challenge string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		sum := sha256.Sum256([]byte(body["code_verifier"]))
+		switch {
+		case body["client_secret"] != "":
+			t.Error("PKCE sign-in must not send a client secret")
+			w.WriteHeader(400)
+		case body["code"] != "trakt-code" || base64.RawURLEncoding.EncodeToString(sum[:]) != challenge:
+			w.WriteHeader(400)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"invalid code"}`))
+		default:
+			_ = json.NewEncoder(w).Encode(trakt.TokenResponse{AccessToken: "a1", RefreshToken: "r1", ExpiresIn: 604800, CreatedAt: int(time.Now().Unix())})
+		}
+	}))
+	defer ts.Close()
+
+	ms := newMockStore()
+	_ = ms.CreateUser(context.Background(), "u1")
+	srv := NewForTest(&config.Config{BaseURL: "http://api.local", FrontendURL: "http://front.local"}, ms, nil,
+		trakt.NewClient("cid").WithBaseURL(ts.URL), cache.New(""))
+
+	// 1. Start sign-in: redirect to Trakt with PKCE and a random state.
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, httptest.NewRequest("GET", "/api/trakt/auth/u1", nil))
+	if w.Code != 302 {
+		t.Fatalf("auth: %d", w.Code)
+	}
+	loc, _ := url.Parse(w.Header().Get("Location"))
+	q := loc.Query()
+	challenge = q.Get("code_challenge")
+	state := q.Get("state")
+	if loc.Host != "auth.trakt.tv" || challenge == "" || q.Get("code_challenge_method") != "S256" {
+		t.Fatalf("authorize redirect missing PKCE: %s", loc)
+	}
+	if state == "" || state == "u1" {
+		t.Fatalf("state must be a random token, got %q", state)
+	}
+
+	// 2. Callback: exchange with the stored verifier, save tokens.
+	w = httptest.NewRecorder()
+	srv.router.ServeHTTP(w, httptest.NewRequest("GET", "/api/trakt/callback?code=trakt-code&state="+state, nil))
+	if w.Code != 302 || w.Header().Get("Location") != "http://front.local/configure/u1?trakt=connected" {
+		t.Fatalf("callback: %d %s %s", w.Code, w.Header().Get("Location"), w.Body.String())
+	}
+	if got := ms.configs["u1"]; got.TraktAccessToken != "a1" || got.TraktRefreshToken != "r1" || !got.TraktConnected {
+		t.Errorf("tokens not saved: %+v", got)
+	}
+
+	// 3. The state is single-use, and unknown states are rejected.
+	for _, st := range []string{state, "forged"} {
+		w = httptest.NewRecorder()
+		srv.router.ServeHTTP(w, httptest.NewRequest("GET", "/api/trakt/callback?code=trakt-code&state="+st, nil))
+		if w.Code != 400 {
+			t.Errorf("state %q: expected 400, got %d", st, w.Code)
+		}
+	}
+}
+
+func TestTraktSignIn_DeclinedRedirectsWithError(t *testing.T) {
+	ms := newMockStore()
+	_ = ms.CreateUser(context.Background(), "u1")
+	srv := NewForTest(&config.Config{BaseURL: "http://api.local", FrontendURL: "http://front.local"}, ms, nil, trakt.NewClient("cid"), cache.New(""))
+
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, httptest.NewRequest("GET", "/api/trakt/auth/u1", nil))
+	loc, _ := url.Parse(w.Header().Get("Location"))
+
+	w = httptest.NewRecorder()
+	srv.router.ServeHTTP(w, httptest.NewRequest("GET", "/api/trakt/callback?error=access_denied&state="+loc.Query().Get("state"), nil))
+	if w.Header().Get("Location") != "http://front.local/configure/u1?trakt=error" {
+		t.Errorf("declined sign-in should return to the config page with an error, got %d %s", w.Code, w.Header().Get("Location"))
 	}
 }

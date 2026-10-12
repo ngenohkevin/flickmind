@@ -174,50 +174,84 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 
 // Trakt OAuth
 
+// traktSignIn is what the OAuth callback needs to finish a sign-in, keyed by
+// the random state sent to Trakt.
+type traktSignIn struct {
+	UserID       string `json:"userId"`
+	CodeVerifier string `json:"codeVerifier"`
+}
+
+const traktSignInTTL = 15 * time.Minute
+
+func traktSignInKey(state string) string { return "trakt-signin:" + state }
+
 func (s *Server) handleTraktAuth(c *gin.Context) {
 	userID := c.Param("userId")
 	if s.traktClient == nil {
 		c.JSON(400, gin.H{"error": "Trakt not configured"})
 		return
 	}
+	if exists, err := s.store.UserExists(c.Request.Context(), userID); err != nil || !exists {
+		c.JSON(404, gin.H{"error": "user not found"})
+		return
+	}
+
+	verifier, challenge, err := trakt.NewPKCE()
+	if err != nil {
+		c.String(500, "Failed to start Trakt sign-in")
+		return
+	}
+	// The state is a random one-time token rather than the user ID, so the
+	// callback can tell a sign-in it started from a forged one.
+	state := uuid.New().String()
+	s.cache.Set(traktSignInKey(state), traktSignIn{UserID: userID, CodeVerifier: verifier}, traktSignInTTL)
 
 	redirectURI := s.cfg.BaseURL + "/api/trakt/callback"
-	authURL := s.traktClient.AuthorizeURL(redirectURI, userID)
-	c.Redirect(302, authURL)
+	c.Redirect(302, s.traktClient.AuthorizeURL(redirectURI, state, challenge))
 }
 
 func (s *Server) handleTraktCallback(c *gin.Context) {
 	code := c.Query("code")
-	userID := c.Query("state")
-
-	if code == "" || userID == "" {
-		c.String(400, "Missing code or state")
-		return
-	}
+	state := c.Query("state")
 
 	if s.traktClient == nil {
 		c.String(500, "Trakt not configured")
 		return
 	}
 
+	var signIn traktSignIn
+	if state == "" || !s.cache.Get(traktSignInKey(state), &signIn) {
+		c.String(400, "This Trakt sign-in link has expired or was already used. Go back to the FlickMind config page and connect Trakt again.")
+		return
+	}
+	s.cache.InvalidatePrefix(traktSignInKey(state))
+	configURL := fmt.Sprintf("%s/configure/%s", s.cfg.FrontendURL, signIn.UserID)
+
+	if code == "" {
+		// The user declined on Trakt, or Trakt returned an error.
+		log.Printf("[Trakt] %s: sign-in not completed: %s %s", signIn.UserID, c.Query("error"), c.Query("error_description"))
+		c.Redirect(302, configURL+"?trakt=error")
+		return
+	}
+
 	redirectURI := s.cfg.BaseURL + "/api/trakt/callback"
-	tokenResp, err := s.traktClient.ExchangeCode(c.Request.Context(), code, redirectURI)
+	tokenResp, err := s.traktClient.ExchangeCode(c.Request.Context(), code, redirectURI, signIn.CodeVerifier)
 	if err != nil {
 		log.Printf("[ERROR] Trakt token exchange: %v", err)
-		c.String(500, "Failed to connect Trakt")
+		c.Redirect(302, configURL+"?trakt=error")
 		return
 	}
 
 	expiresAt := trakt.TokenExpiresAt(tokenResp)
-	if err := s.store.SaveTraktTokens(c.Request.Context(), userID, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt); err != nil {
+	if err := s.store.SaveTraktTokens(c.Request.Context(), signIn.UserID, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt); err != nil {
 		log.Printf("[ERROR] Save trakt tokens: %v", err)
-		c.String(500, "Failed to save Trakt tokens")
+		c.Redirect(302, configURL+"?trakt=error")
 		return
 	}
 
-	s.cache.InvalidatePrefix(userID + ":")
+	s.cache.InvalidatePrefix(signIn.UserID + ":")
 	// Redirect back to the Next.js frontend config page
-	c.Redirect(302, fmt.Sprintf("%s/configure/%s?trakt=connected", s.cfg.FrontendURL, userID))
+	c.Redirect(302, configURL+"?trakt=connected")
 }
 
 func (s *Server) handleTraktDisconnect(c *gin.Context) {
