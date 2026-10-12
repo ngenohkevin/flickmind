@@ -135,6 +135,17 @@ func TestBuildPrompt_AsksForBestEffort(t *testing.T) {
 	}
 }
 
+func TestBuildPrompt_SeasonedViewerAvoidsObviousPicks(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
+	prompt := BuildPrompt(KindPicks, cfg, PromptInput{MediaType: "movie", WatchedCount: 573})
+	if !strings.Contains(prompt, "already watched 573 movies and shows") {
+		t.Error("a large watched list should steer away from the obvious hits")
+	}
+	if strings.Contains(BuildPrompt(KindPicks, cfg, PromptInput{MediaType: "movie", WatchedCount: 20}), "already watched") {
+		t.Error("a small watched list shouldn't add the hint")
+	}
+}
+
 func TestOverRequest(t *testing.T) {
 	for _, tt := range []struct{ n, want int }{{10, 18}, {30, 45}, {50, 60}} {
 		if got := OverRequest(tt.n); got != tt.want {

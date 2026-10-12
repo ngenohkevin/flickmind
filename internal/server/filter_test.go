@@ -159,3 +159,28 @@ func TestFilter_GemsNeedQualityAndVotes(t *testing.T) {
 		t.Errorf("kept = %q (%s)", got, summary)
 	}
 }
+
+func TestFilter_BlocksWatchedByTMDBID(t *testing.T) {
+	cfg := liveCfg()
+	f := newResultFilter(prefs.For(cfg, prefs.Picks), allowedTypes(cfg, "series"), []trakt.WatchedItem{
+		{Title: "Le Bureau des Légendes", Year: 2015, MediaType: "show", TMDBID: 62852},
+	})
+
+	kept, summary := f.apply([]tmdb.SearchResult{
+		show(62852, "The Bureau", 2015, "en", 8.2, 80, 18),     // same show, different title
+		show(1, "The Night Of", 2016, "en", 8.0, 80, 18, 9648), // not watched
+	})
+	if got := keptTitles(kept); got != "The Night Of" {
+		t.Errorf("kept = %q (%s)", got, summary)
+	}
+}
+
+func TestPromptHistory_RecentFirstDedupedAndCapped(t *testing.T) {
+	history := []trakt.WatchedItem{{Title: "Andor", Year: 2022}, {Title: "Andor", Year: 2022}}
+	watched := []trakt.WatchedItem{{Title: "Andor", Year: 2022}, {Title: "Sicario", Year: 2015}, {Title: "Arrival", Year: 2016}}
+
+	got := promptHistory(history, watched, 2)
+	if strings.Join(got, "|") != "Andor (2022)|Sicario (2015)" {
+		t.Errorf("promptHistory = %v", got)
+	}
+}

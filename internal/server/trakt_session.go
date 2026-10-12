@@ -129,6 +129,52 @@ func (s *Server) fetchWatchlist(ctx context.Context, cfg *store.UserConfig) []tr
 	})
 }
 
+// watchedTTL is how long a user's full watched list is cached; one Stremio
+// load requests every catalog at once and each needs it.
+const watchedTTL = time.Hour
+
+// fetchWatched returns everything the user has watched on Trakt (cached).
+// The key starts with the user ID so config changes and Trakt reconnects,
+// which invalidate that prefix, drop it too.
+func (s *Server) fetchWatched(ctx context.Context, cfg *store.UserConfig) []trakt.WatchedItem {
+	if s.traktClient == nil || cfg.TraktAccessToken == "" {
+		return nil
+	}
+	key := cfg.UserID + ":trakt-watched"
+	var cached []trakt.WatchedItem
+	if s.cache.Get(key, &cached) {
+		return cached
+	}
+	items := s.fetchTrakt(ctx, cfg, "watched list", func(token string) ([]trakt.WatchedItem, error) {
+		return s.traktClient.GetWatched(ctx, token)
+	})
+	if len(items) > 0 {
+		s.cache.Set(key, items, watchedTTL)
+	}
+	return items
+}
+
+// promptHistory picks the titles shown to the AI as taste and exclusions:
+// recent plays first, then the most recently watched, up to limit. The full
+// watched list is too long for a prompt; the filter enforces all of it.
+func promptHistory(history, watched []trakt.WatchedItem, limit int) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, list := range [][]trakt.WatchedItem{history, watched} {
+		for _, item := range list {
+			if len(out) >= limit {
+				return out
+			}
+			title := fmt.Sprintf("%s (%d)", item.Title, item.Year)
+			if !seen[title] {
+				seen[title] = true
+				out = append(out, title)
+			}
+		}
+	}
+	return out
+}
+
 func formatTitles(items []trakt.WatchedItem) []string {
 	titles := make([]string, len(items))
 	for i, item := range items {

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"time"
 )
 
@@ -77,12 +79,12 @@ func (c *Client) GetWatchlist(ctx context.Context, accessToken string, limit int
 			if w.Movie == nil {
 				continue
 			}
-			item = WatchedItem{Title: w.Movie.Title, Year: w.Movie.Year, MediaType: "movie"}
+			item = WatchedItem{Title: w.Movie.Title, Year: w.Movie.Year, MediaType: "movie", TMDBID: w.Movie.IDs.TMDB}
 		case "show":
 			if w.Show == nil {
 				continue
 			}
-			item = WatchedItem{Title: w.Show.Title, Year: w.Show.Year, MediaType: "show"}
+			item = WatchedItem{Title: w.Show.Title, Year: w.Show.Year, MediaType: "show", TMDBID: w.Show.IDs.TMDB}
 		default:
 			continue
 		}
@@ -137,12 +139,12 @@ func (c *Client) GetWatchHistory(ctx context.Context, accessToken string, limit 
 			if h.Movie == nil {
 				continue
 			}
-			item = WatchedItem{Title: h.Movie.Title, Year: h.Movie.Year, MediaType: "movie"}
+			item = WatchedItem{Title: h.Movie.Title, Year: h.Movie.Year, MediaType: "movie", TMDBID: h.Movie.IDs.TMDB}
 		case "episode":
 			if h.Show == nil {
 				continue
 			}
-			item = WatchedItem{Title: h.Show.Title, Year: h.Show.Year, MediaType: "show"}
+			item = WatchedItem{Title: h.Show.Title, Year: h.Show.Year, MediaType: "show", TMDBID: h.Show.IDs.TMDB}
 		default:
 			continue
 		}
@@ -155,4 +157,74 @@ func (c *Client) GetWatchHistory(ctx context.Context, accessToken string, limit 
 	}
 
 	return items, nil
+}
+
+// maxWatchedPages bounds how far GetWatched pages (100 items per page).
+const maxWatchedPages = 50
+
+// GetWatched returns everything the user has ever watched, movies and shows,
+// most recently watched first. History only covers recent plays (a binge of
+// one show fills it), so this is what exclusion has to use.
+func (c *Client) GetWatched(ctx context.Context, accessToken string) ([]WatchedItem, error) {
+	var all []WatchedItem
+	for _, kind := range []string{"movies", "shows"} {
+		for page := 1; page <= maxWatchedPages; page++ {
+			path := fmt.Sprintf("/sync/watched/%s?page=%d&limit=100", kind, page)
+			if kind == "shows" {
+				path += "&extended=noseasons" // skip per-episode detail
+			}
+			items, pageCount, err := c.getWatchedPage(ctx, accessToken, path)
+			if err != nil {
+				return nil, err
+			}
+			all = append(all, items...)
+			if page >= pageCount || len(items) == 0 {
+				break
+			}
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].lastWatched > all[j].lastWatched })
+	return all, nil
+}
+
+func (c *Client) getWatchedPage(ctx context.Context, accessToken, path string) ([]WatchedItem, int, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("trakt-api-version", "2")
+	req.Header.Set("trakt-api-key", c.clientID)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, 0, ErrUnauthorized
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, 0, fmt.Errorf("trakt API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var raw []traktWatchedItem
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, 0, err
+	}
+
+	pageCount, _ := strconv.Atoi(resp.Header.Get("X-Pagination-Page-Count"))
+	items := make([]WatchedItem, 0, len(raw))
+	for _, w := range raw {
+		switch {
+		case w.Movie != nil:
+			items = append(items, WatchedItem{Title: w.Movie.Title, Year: w.Movie.Year, MediaType: "movie", TMDBID: w.Movie.IDs.TMDB, lastWatched: w.LastWatchedAt})
+		case w.Show != nil:
+			items = append(items, WatchedItem{Title: w.Show.Title, Year: w.Show.Year, MediaType: "show", TMDBID: w.Show.IDs.TMDB, lastWatched: w.LastWatchedAt})
+		}
+	}
+	return items, pageCount, nil
 }

@@ -28,7 +28,12 @@ type PromptInput struct {
 	SeedTitle    string   // Because You Watched: the title to build from
 	Count        int      // titles to request; 0 means OverRequest(cfg.MaxResults)
 	Exclude      []string // titles already suggested earlier in this refresh
+	WatchedCount int      // size of the user's full watched list (Trakt)
 }
+
+// seasonedViewer is the watched-list size at which the obvious picks are
+// mostly already seen.
+const seasonedViewer = 100
 
 // maxRequest caps how many titles one prompt asks for, so a 50-result
 // catalog stays inside the providers' output token limits.
@@ -97,6 +102,9 @@ func BuildPrompt(kind PromptKind, cfg *store.UserConfig, in PromptInput) string 
 		parts = append(parts, fmt.Sprintf("MOOD: %s", cfg.Mood))
 	}
 
+	if in.WatchedCount >= seasonedViewer {
+		parts = append(parts, fmt.Sprintf("\nThe user has already watched %d movies and shows, including most widely known hits. Favor strong picks they are less likely to have seen over the obvious famous titles.", in.WatchedCount))
+	}
 	if len(in.WatchHistory) > 0 {
 		parts = append(parts, fmt.Sprintf("\nRECENTLY WATCHED (exclude these): %s", strings.Join(in.WatchHistory, ", ")))
 		if kind != KindWatchlist && kind != KindBecauseYouWatched {

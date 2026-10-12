@@ -21,6 +21,7 @@ type resultFilter struct {
 	excluded map[string]bool
 	langs    map[string]bool
 	blocked  map[string][]int // normalized title -> years (watched, watchlist)
+	blockIDs map[string]bool  // "movie:123" / "tv:123" TMDB keys of the same
 	seen     map[string]bool  // "movie:123" keys already kept
 }
 
@@ -32,11 +33,19 @@ func newResultFilter(rules prefs.Rules, types map[string]bool, blocked []trakt.W
 		excluded: toSet(rules.Excluded),
 		langs:    toSet(rules.Languages),
 		blocked:  map[string][]int{},
+		blockIDs: map[string]bool{},
 		seen:     map[string]bool{},
 	}
 	for _, item := range blocked {
 		key := tmdb.NormTitle(item.Title)
 		f.blocked[key] = append(f.blocked[key], item.Year)
+		if item.TMDBID > 0 {
+			mediaType := "movie"
+			if item.MediaType == "show" {
+				mediaType = "tv"
+			}
+			f.blockIDs[fmt.Sprintf("%s:%d", mediaType, item.TMDBID)] = true
+		}
 	}
 	return f
 }
@@ -130,6 +139,9 @@ func (f *resultFilter) reject(r tmdb.SearchResult) string {
 // isBlocked reports whether the title is one the user already watched or
 // saved. Trakt and TMDB can disagree on the year by one, so allow that.
 func (f *resultFilter) isBlocked(r tmdb.SearchResult) bool {
+	if f.blockIDs[seenKey(r)] {
+		return true
+	}
 	for _, y := range f.blocked[tmdb.NormTitle(r.Title)] {
 		if y == 0 || r.Year == 0 || (y-r.Year <= 1 && r.Year-y <= 1) {
 			return true

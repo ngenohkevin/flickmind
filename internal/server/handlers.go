@@ -290,7 +290,7 @@ func (s *Server) handleManifest(c *gin.Context) {
 
 // cacheVersion is part of every catalog cache key; bump it when the pipeline
 // changes so catalogs built by the old logic aren't served after a deploy.
-const cacheVersion = "v2"
+const cacheVersion = "v3"
 
 func (s *Server) handleCatalog(c *gin.Context) {
 	userID := c.Param("userId")
@@ -365,10 +365,33 @@ type catalogRequest struct {
 	discover bool
 }
 
+// traktContext loads what the user has seen: recent plays (for the
+// Because You Watched seed) and the full watched list (for exclusion).
+type traktContext struct {
+	history []trakt.WatchedItem
+	watched []trakt.WatchedItem
+}
+
+func (s *Server) loadTrakt(ctx context.Context, cfg *store.UserConfig) traktContext {
+	tc := traktContext{history: s.fetchWatchHistory(ctx, cfg)}
+	tc.watched = s.fetchWatched(ctx, cfg)
+	return tc
+}
+
+// apply fills a request's exclusions and prompt context from Trakt.
+func (tc traktContext) apply(req *catalogRequest) {
+	req.blocked = append(append(req.blocked, tc.history...), tc.watched...)
+	req.input.WatchHistory = promptHistory(tc.history, tc.watched, promptHistoryLimit)
+	req.input.WatchedCount = len(tc.watched)
+}
+
+// promptHistoryLimit caps the watched titles listed in a prompt.
+const promptHistoryLimit = 60
+
 func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
-	history := s.fetchWatchHistory(ctx, cfg)
-	req := catalogRequest{tag: "AI Picks", kind: ai.KindPicks, mediaType: mediaType, blocked: history, discover: true}
-	req.input.WatchHistory = formatTitles(history)
+	tc := s.loadTrakt(ctx, cfg)
+	req := catalogRequest{tag: "AI Picks", kind: ai.KindPicks, mediaType: mediaType, discover: true}
+	tc.apply(&req)
 
 	if cfg.RecommendationSource == "watchlist" {
 		if watchlist := s.fetchWatchlist(ctx, cfg); len(watchlist) > 0 {
@@ -383,9 +406,8 @@ func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaTyp
 }
 
 func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
-	history := s.fetchWatchHistory(ctx, cfg)
-	req := catalogRequest{tag: "Hidden Gems", kind: ai.KindGems, mediaType: mediaType, blocked: history, discover: true}
-	req.input.WatchHistory = formatTitles(history)
+	req := catalogRequest{tag: "Hidden Gems", kind: ai.KindGems, mediaType: mediaType, discover: true}
+	s.loadTrakt(ctx, cfg).apply(&req)
 	return s.buildCatalog(ctx, cfg, req)
 }
 
@@ -394,13 +416,15 @@ func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig
 		return nil
 	}
 
-	history := s.fetchWatchHistory(ctx, cfg)
-	if len(history) == 0 {
+	tc := s.loadTrakt(ctx, cfg)
+	if len(tc.history) == 0 {
 		return nil
 	}
 
-	req := catalogRequest{tag: "Because You Watched", kind: ai.KindBecauseYouWatched, mediaType: mediaType, blocked: history}
-	req.input.SeedTitle = formatTitles(history[:1])[0]
+	req := catalogRequest{tag: "Because You Watched", kind: ai.KindBecauseYouWatched, mediaType: mediaType}
+	tc.apply(&req)
+	req.input.WatchHistory = nil // the seed title is the context here
+	req.input.SeedTitle = formatTitles(tc.history[:1])[0]
 	return s.buildCatalog(ctx, cfg, req)
 }
 
@@ -409,9 +433,8 @@ func (s *Server) getFocusedPicks(ctx context.Context, cfg *store.UserConfig, kin
 	if kind == ai.KindDocumentary {
 		tag = "Documentary Picks"
 	}
-	history := s.fetchWatchHistory(ctx, cfg)
-	req := catalogRequest{tag: tag, kind: kind, blocked: history, discover: true}
-	req.input.WatchHistory = formatTitles(history)
+	req := catalogRequest{tag: tag, kind: kind, discover: true}
+	s.loadTrakt(ctx, cfg).apply(&req)
 	return s.buildCatalog(ctx, cfg, req)
 }
 
