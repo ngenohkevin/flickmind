@@ -13,8 +13,8 @@ func TestBuildManifest_BaseCatalogs(t *testing.T) {
 	if m.ID != "community.flickmind" {
 		t.Errorf("expected id community.flickmind, got %s", m.ID)
 	}
-	if m.Version != "2.1.0" {
-		t.Errorf("expected version 2.1.0, got %s", m.Version)
+	if m.Version != "2.2.0" {
+		t.Errorf("expected version 2.2.0, got %s", m.Version)
 	}
 	if m.Name != "FlickMind" {
 		t.Errorf("expected name FlickMind, got %s", m.Name)

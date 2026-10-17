@@ -3,7 +3,7 @@ package stremio
 import "github.com/ngenohkevin/flickmind/internal/store"
 
 // Version is the addon version Stremio/Nuvio show. Bump it with each release.
-const Version = "2.1.0"
+const Version = "2.2.0"
 
 func BuildManifest(baseURL, frontendURL, userID string, cfg *store.UserConfig) Manifest {
 	// Determine which Stremio types to show based on user's content type preferences.

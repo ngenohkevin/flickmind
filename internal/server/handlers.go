@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -9,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/ngenohkevin/flickmind/internal/ai"
 	"github.com/ngenohkevin/flickmind/internal/prefs"
@@ -290,67 +294,184 @@ func (s *Server) handleManifest(c *gin.Context) {
 
 // cacheVersion is part of every catalog cache key; bump it when the pipeline
 // changes so catalogs built by the old logic aren't served after a deploy.
-const cacheVersion = "v3"
+// v4: rows skip each other's titles and are cached with their TMDB keys.
+const cacheVersion = "v4"
 
+const (
+	// lastTTL keeps a row's last list to serve while its replacement builds.
+	lastTTL = 7 * 24 * time.Hour
+	// retryTTL holds the last list as fresh after a build that produced
+	// nothing (providers down), so it isn't retried on every request.
+	retryTTL = 15 * time.Minute
+	// buildTimeout bounds one row build.
+	buildTimeout = 110 * time.Second
+)
+
+// knownCatalogs are the row IDs the manifest can list.
+var knownCatalogs = map[string]bool{
+	"flickmind-ai-picks":            true,
+	"flickmind-hidden-gems":         true,
+	"flickmind-because-you-watched": true,
+	"flickmind-anime":               true,
+	"flickmind-documentary":         true,
+}
+
+// catalogEntry is a built row as cached: the metas served to the app and the
+// TMDB keys ("movie:123") of the same titles, which the other rows skip.
+type catalogEntry struct {
+	Metas []stremio.Meta `json:"metas"`
+	Keys  []string       `json:"keys"`
+}
+
+func (e catalogEntry) response() stremio.CatalogResponse {
+	if e.Metas == nil {
+		return stremio.CatalogResponse{Metas: []stremio.Meta{}}
+	}
+	return stremio.CatalogResponse{Metas: e.Metas}
+}
+
+// rowKey is a row's cache key. It carries a fingerprint of the settings, so
+// a row built with old settings is never served once the config page saves
+// new ones, including one that was still building at the time.
+func rowKey(cfg *store.UserConfig, catalogID, mediaType string) string {
+	return fmt.Sprintf("%s:%s:%s:%s:%s", cfg.UserID, cacheVersion, settingsFingerprint(cfg), catalogID, mediaType)
+}
+
+func lastKey(rowKey string) string { return rowKey + ":last" }
+
+// settingsFingerprint hashes everything that changes what a row contains.
+func settingsFingerprint(cfg *store.UserConfig) string {
+	b, _ := json.Marshal([]any{
+		cfg.Genres, cfg.ContentTypes, cfg.Language, cfg.Mood, cfg.MinRating,
+		cfg.YearFrom, cfg.YearTo, cfg.MaxResults, cfg.RecommendationSource, cfg.TraktConnected,
+		cfg.GroqKey != "", cfg.DeepSeekKey != "", cfg.GeminiKey != "",
+	})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:4])
+}
+
+// handleCatalog answers from the cache. When a row has expired it answers
+// with the row's last list and rebuilds it in the background: a rebuild
+// takes 10-50 s, longer than Stremio and Nuvio wait, so they used to give up
+// (and the build was thrown away with the request). Only a row that was
+// never built makes the app wait.
 func (s *Server) handleCatalog(c *gin.Context) {
 	userID := c.Param("userId")
 	mediaType := c.Param("type")
-	catalogID := c.Param("id")
+	catalogID := strings.TrimSuffix(c.Param("id"), ".json")
 
-	catalogID = strings.TrimSuffix(catalogID, ".json")
-
-	cacheKey := fmt.Sprintf("%s:%s:%s:%s", userID, cacheVersion, catalogID, mediaType)
-
-	var cached stremio.CatalogResponse
-	if s.cache.Get(cacheKey, &cached) {
-		c.JSON(200, cached)
+	if !knownCatalogs[catalogID] {
+		c.JSON(200, catalogEntry{}.response())
 		return
 	}
-
 	cfg, err := s.store.GetUserConfig(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(200, stremio.CatalogResponse{Metas: []stremio.Meta{}})
+		c.JSON(200, catalogEntry{}.response())
 		return
 	}
 	store.NormalizeConfig(cfg)
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 110*time.Second)
-	defer cancel()
-
-	// Limit concurrent AI calls per user to avoid provider rate limits.
-	// Placed after cache check so cached responses return immediately.
-	s.aiSem.acquire(userID)
-	defer s.aiSem.release(userID)
-
-	var metas []stremio.Meta
-
-	switch catalogID {
-	case "flickmind-ai-picks":
-		metas = s.getAIPicks(ctx, cfg, mediaType)
-	case "flickmind-hidden-gems":
-		metas = s.getHiddenGems(ctx, cfg, mediaType)
-	case "flickmind-because-you-watched":
-		metas = s.getBecauseYouWatched(ctx, cfg, mediaType)
-	case "flickmind-anime":
-		metas = s.getFocusedPicks(ctx, cfg, ai.KindAnime)
-	case "flickmind-documentary":
-		metas = s.getFocusedPicks(ctx, cfg, ai.KindDocumentary)
-	default:
-		c.JSON(200, stremio.CatalogResponse{Metas: []stremio.Meta{}})
+	key := rowKey(cfg, catalogID, mediaType)
+	var entry catalogEntry
+	if s.cache.Get(key, &entry) {
+		c.JSON(200, entry.response())
 		return
 	}
 
-	resp := stremio.CatalogResponse{Metas: metas}
+	built := s.rebuildRow(cfg, catalogID, mediaType)
+	if s.cache.Get(lastKey(key), &entry) && len(entry.Metas) > 0 {
+		c.JSON(200, entry.response())
+		return
+	}
+	select {
+	case res := <-built:
+		entry, _ = res.Val.(catalogEntry)
+		c.JSON(200, entry.response())
+	case <-c.Request.Context().Done():
+	}
+}
 
-	if len(metas) > 0 {
+// rebuildRow builds a row at most once at a time, detached from the request
+// that asked for it, and caches the result.
+func (s *Server) rebuildRow(cfg *store.UserConfig, catalogID, mediaType string) <-chan singleflight.Result {
+	key := rowKey(cfg, catalogID, mediaType)
+	return s.rowFlights.DoChan(key, func() (any, error) {
+		entry := s.safeBuild(cfg, catalogID, mediaType)
+		s.storeRow(cfg, key, catalogID, entry)
+		return entry, nil
+	})
+}
+
+// safeBuild runs the row builder with its own deadline, inside the per-user
+// AI limit. A panic must not take the server down: the build runs outside
+// the request, where gin's recovery doesn't reach.
+func (s *Server) safeBuild(cfg *store.UserConfig, catalogID, mediaType string) (entry catalogEntry) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[ERROR] building %s %s for %s: %v", catalogID, mediaType, cfg.UserID, r)
+			entry = catalogEntry{}
+		}
+	}()
+	// The deadline starts once the row has an AI slot (two rows per user at
+	// a time), so the last of seven rows doesn't spend its budget waiting.
+	s.aiSem.acquire(cfg.UserID)
+	defer s.aiSem.release(cfg.UserID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), buildTimeout)
+	defer cancel()
+	return s.rowBuilder(ctx, cfg, catalogID, mediaType)
+}
+
+func (s *Server) storeRow(cfg *store.UserConfig, key, catalogID string, entry catalogEntry) {
+	if len(entry.Metas) > 0 {
 		ttl := store.ParseRefreshInterval(cfg.RefreshInterval)
 		if catalogID == "flickmind-hidden-gems" && ttl < 6*time.Hour {
 			ttl = 6 * time.Hour
 		}
-		s.cache.Set(cacheKey, resp, ttl)
+		s.cache.Set(key, entry, ttl)
+		s.cache.Set(lastKey(key), entry, lastTTL)
+		return
 	}
+	var last catalogEntry
+	if s.cache.Get(lastKey(key), &last) && len(last.Metas) > 0 {
+		s.cache.Set(key, last, retryTTL)
+	}
+}
 
-	c.JSON(200, resp)
+// buildRow builds one row, skipping titles the user's other rows show.
+func (s *Server) buildRow(ctx context.Context, cfg *store.UserConfig, catalogID, mediaType string) catalogEntry {
+	hidden := s.otherRowKeys(cfg, catalogID, mediaType)
+	switch catalogID {
+	case "flickmind-ai-picks":
+		return s.getAIPicks(ctx, cfg, mediaType, hidden)
+	case "flickmind-hidden-gems":
+		return s.getHiddenGems(ctx, cfg, mediaType, hidden)
+	case "flickmind-because-you-watched":
+		return s.getBecauseYouWatched(ctx, cfg, mediaType, hidden)
+	case "flickmind-anime":
+		return s.getFocusedPicks(ctx, cfg, ai.KindAnime, hidden)
+	case "flickmind-documentary":
+		return s.getFocusedPicks(ctx, cfg, ai.KindDocumentary, hidden)
+	}
+	return catalogEntry{}
+}
+
+// otherRowKeys returns the titles the user's other rows show (their last
+// lists). Rows were built independently and repeated each other: Blue Ruin,
+// Cold in July and Coherence sat in AI Picks, Because You Watched and Hidden
+// Gems at once.
+func (s *Server) otherRowKeys(cfg *store.UserConfig, catalogID, mediaType string) []string {
+	var keys []string
+	for _, cat := range stremio.BuildManifest(s.cfg.BaseURL, s.cfg.FrontendURL, cfg.UserID, cfg).Catalogs {
+		if cat.ID == catalogID && cat.Type == mediaType {
+			continue
+		}
+		var e catalogEntry
+		if s.cache.Get(lastKey(rowKey(cfg, cat.ID, cat.Type)), &e) {
+			keys = append(keys, e.Keys...)
+		}
+	}
+	return keys
 }
 
 // catalogRequest describes one catalog build.
@@ -360,6 +481,7 @@ type catalogRequest struct {
 	mediaType string // "movie" or "series"; "" for the mixed anime/documentary rows
 	input     ai.PromptInput
 	blocked   []trakt.WatchedItem // titles never to show: watched, and the watchlist in watchlist mode
+	hidden    []string            // TMDB keys the user's other rows show
 	// discover fills a shortfall (or an AI failure) from TMDB discover.
 	// Because You Watched skips it: popular titles aren't "similar to X".
 	discover bool
@@ -388,9 +510,9 @@ func (tc traktContext) apply(req *catalogRequest) {
 // promptHistoryLimit caps the watched titles listed in a prompt.
 const promptHistoryLimit = 60
 
-func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
+func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaType string, hidden []string) catalogEntry {
 	tc := s.loadTrakt(ctx, cfg)
-	req := catalogRequest{tag: "AI Picks", kind: ai.KindPicks, mediaType: mediaType, discover: true}
+	req := catalogRequest{tag: "AI Picks", kind: ai.KindPicks, mediaType: mediaType, hidden: hidden, discover: true}
 	tc.apply(&req)
 
 	if cfg.RecommendationSource == "watchlist" {
@@ -405,35 +527,35 @@ func (s *Server) getAIPicks(ctx context.Context, cfg *store.UserConfig, mediaTyp
 	return s.buildCatalog(ctx, cfg, req)
 }
 
-func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
-	req := catalogRequest{tag: "Hidden Gems", kind: ai.KindGems, mediaType: mediaType, discover: true}
+func (s *Server) getHiddenGems(ctx context.Context, cfg *store.UserConfig, mediaType string, hidden []string) catalogEntry {
+	req := catalogRequest{tag: "Hidden Gems", kind: ai.KindGems, mediaType: mediaType, hidden: hidden, discover: true}
 	s.loadTrakt(ctx, cfg).apply(&req)
 	return s.buildCatalog(ctx, cfg, req)
 }
 
-func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig, mediaType string) []stremio.Meta {
+func (s *Server) getBecauseYouWatched(ctx context.Context, cfg *store.UserConfig, mediaType string, hidden []string) catalogEntry {
 	if !cfg.TraktConnected || s.traktClient == nil {
-		return nil
+		return catalogEntry{}
 	}
 
 	tc := s.loadTrakt(ctx, cfg)
 	if len(tc.history) == 0 {
-		return nil
+		return catalogEntry{}
 	}
 
-	req := catalogRequest{tag: "Because You Watched", kind: ai.KindBecauseYouWatched, mediaType: mediaType}
+	req := catalogRequest{tag: "Because You Watched", kind: ai.KindBecauseYouWatched, mediaType: mediaType, hidden: hidden}
 	tc.apply(&req)
 	req.input.WatchHistory = nil // the seed title is the context here
 	req.input.SeedTitle = formatTitles(tc.history[:1])[0]
 	return s.buildCatalog(ctx, cfg, req)
 }
 
-func (s *Server) getFocusedPicks(ctx context.Context, cfg *store.UserConfig, kind ai.PromptKind) []stremio.Meta {
+func (s *Server) getFocusedPicks(ctx context.Context, cfg *store.UserConfig, kind ai.PromptKind, hidden []string) catalogEntry {
 	tag := "Anime Picks"
 	if kind == ai.KindDocumentary {
 		tag = "Documentary Picks"
 	}
-	req := catalogRequest{tag: tag, kind: kind, discover: true}
+	req := catalogRequest{tag: tag, kind: kind, hidden: hidden, discover: true}
 	s.loadTrakt(ctx, cfg).apply(&req)
 	return s.buildCatalog(ctx, cfg, req)
 }
@@ -441,9 +563,10 @@ func (s *Server) getFocusedPicks(ctx context.Context, cfg *store.UserConfig, kin
 // buildCatalog produces up to cfg.MaxResults titles that all honor the
 // user's settings: AI suggestions first (with a second round to cover what the
 // filter dropped), then TMDB discover for any remaining shortfall.
-func (s *Server) buildCatalog(ctx context.Context, cfg *store.UserConfig, req catalogRequest) []stremio.Meta {
-	rules := prefs.For(cfg, ai.RulesKind(req.kind))
+func (s *Server) buildCatalog(ctx context.Context, cfg *store.UserConfig, req catalogRequest) catalogEntry {
+	rules := prefs.ForMedia(cfg, ai.RulesKind(req.kind), req.mediaType)
 	filter := newResultFilter(rules, allowedTypes(cfg, req.mediaType), req.blocked)
+	filter.hide(req.hidden)
 	want := cfg.MaxResults
 
 	var kept []tmdb.SearchResult
@@ -463,7 +586,15 @@ func (s *Server) buildCatalog(ctx context.Context, cfg *store.UserConfig, req ca
 		}
 	}
 
-	return limitResults(filterByType(kept, req.mediaType), want)
+	final := typed(kept, req.mediaType)
+	if want > 0 && len(final) > want {
+		final = final[:want]
+	}
+	entry := catalogEntry{Metas: toMetas(final)}
+	for _, r := range final {
+		entry.Keys = append(entry.Keys, seenKey(r))
+	}
+	return entry
 }
 
 // aiRounds asks the AI for titles, enriches them via TMDB and keeps those
@@ -544,15 +675,29 @@ func (s *Server) discoverFill(ctx context.Context, req catalogRequest, rules pre
 	case ai.KindGems:
 		// Highly rated but little-voted, and old enough that the vote count
 		// means something: recent blockbusters sit under any vote cap for
-		// months. TV movies (specials) are skipped.
+		// months. TV movies (specials) are skipped. Shows collect far fewer
+		// votes than films, so they get lower bounds: the film bounds filled
+		// the row with Andor, Outer Banks and 9-1-1.
 		o.MinRating = max(o.MinRating, 7.0)
-		o.MinVotes = 300
-		o.MaxVotes = 3000
+		o.MinVotes, o.MaxVotes = 300, 3000
+		if req.mediaType == "series" {
+			o.MinVotes, o.MaxVotes = 80, prefs.GemsMaxVotesSeries
+		}
 		o.SortBy = "vote_average.desc"
 		o.ReleasedBefore = time.Now().AddDate(-3, 0, 0)
 		o.SkipTVMovies = true
 	case ai.KindAnime, ai.KindDocumentary:
 		o.Genres = []string{rules.Required}
+	default:
+		// Best rated rather than most popular: popularity filled AI Picks
+		// with network procedurals (Blue Bloods, Hawaii Five-0, 9-1-1).
+		// Acclaimed titles the user has seen are dropped by the filter.
+		o.MinRating = max(o.MinRating, 7.0)
+		o.MinVotes = 1000
+		if req.mediaType == "series" {
+			o.MinVotes = 300
+		}
+		o.SortBy = "vote_average.desc"
 	}
 
 	accepted, _ := filter.apply(s.tmdbClient.DiscoverFallback(ctx, o))
@@ -562,11 +707,15 @@ func (s *Server) discoverFill(ctx context.Context, req catalogRequest, rules pre
 func (s *Server) buildProviderChain(cfg *store.UserConfig) []ai.ProviderEntry {
 	var chain []ai.ProviderEntry
 
-	if cfg.GroqKey != "" {
-		chain = append(chain, ai.ProviderEntry{Provider: &ai.GroqProvider{}, APIKey: cfg.GroqKey})
-	}
+	// DeepSeek first: over five days its suggestions existed on TMDB 75-100%
+	// of the time against Groq's 45-68% ("The Terror: Crimson Sky"), and
+	// Groq's free tier ran out of tokens per minute when the rows refreshed
+	// together. Groq stays as the fallback.
 	if cfg.DeepSeekKey != "" {
 		chain = append(chain, ai.ProviderEntry{Provider: &ai.DeepSeekProvider{}, APIKey: cfg.DeepSeekKey})
+	}
+	if cfg.GroqKey != "" {
+		chain = append(chain, ai.ProviderEntry{Provider: &ai.GroqProvider{}, APIKey: cfg.GroqKey})
 	}
 	if cfg.GeminiKey != "" {
 		chain = append(chain, ai.ProviderEntry{Provider: &ai.GeminiProvider{}, APIKey: cfg.GeminiKey})
@@ -575,28 +724,32 @@ func (s *Server) buildProviderChain(cfg *store.UserConfig) []ai.ProviderEntry {
 	return chain
 }
 
-func filterByType(results []tmdb.SearchResult, mediaType string) []stremio.Meta {
-	var metas []stremio.Meta
+// typed keeps the results a row of mediaType ("movie"/"series") may show;
+// "" keeps all.
+func typed(results []tmdb.SearchResult, mediaType string) []tmdb.SearchResult {
+	var out []tmdb.SearchResult
 	for _, r := range results {
 		stremioType := "movie"
 		if r.MediaType == "tv" {
 			stremioType = "series"
 		}
 		if stremioType == mediaType || mediaType == "" {
-			metas = append(metas, stremio.TMDBResultToMeta(r, r.Reason))
+			out = append(out, r)
 		}
 	}
-	if metas == nil {
-		metas = []stremio.Meta{}
+	return out
+}
+
+func toMetas(results []tmdb.SearchResult) []stremio.Meta {
+	metas := []stremio.Meta{}
+	for _, r := range results {
+		metas = append(metas, stremio.TMDBResultToMeta(r, r.Reason))
 	}
 	return metas
 }
 
-func limitResults(metas []stremio.Meta, max int) []stremio.Meta {
-	if max > 0 && len(metas) > max {
-		return metas[:max]
-	}
-	return metas
+func filterByType(results []tmdb.SearchResult, mediaType string) []stremio.Meta {
+	return toMetas(typed(results, mediaType))
 }
 
 // mergeKey applies a key from the config page: absent or masked ("••••abcd",

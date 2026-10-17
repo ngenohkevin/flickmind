@@ -227,16 +227,16 @@ func TestCatalogRoute_AllCatalogIDs(t *testing.T) {
 	srv := newTestServer(ms)
 
 	// Test that all catalog routes resolve (not 404).
-	// ai-picks and hidden-gems hit TMDB fallback with nil client (500 from recovery),
-	// because-you-watched returns 200 with empty metas (no Trakt connected).
+	// ai-picks and hidden-gems hit TMDB fallback with a nil client and panic;
+	// rows build outside the request, so the panic is recovered there and the
+	// route answers with an empty row. because-you-watched returns early (no
+	// Trakt connected).
 	catalogTests := []struct {
 		catalogID  string
 		expectCode int
 	}{
-		// These two hit tmdbClient.DiscoverFallback with nil client → panic → 500
-		{"flickmind-ai-picks", 500},
-		{"flickmind-hidden-gems", 500},
-		// This returns early (no Trakt) → 200
+		{"flickmind-ai-picks", 200},
+		{"flickmind-hidden-gems", 200},
 		{"flickmind-because-you-watched", 200},
 	}
 	types := []string{"movie", "series"}

@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/ngenohkevin/flickmind/internal/cache"
 	"github.com/ngenohkevin/flickmind/internal/config"
@@ -20,6 +23,9 @@ type Server struct {
 	router      *gin.Engine
 	aiSem       *userSemaphore
 	traktLocks  traktLocks
+	rowFlights  singleflight.Group
+	// rowBuilder builds one catalog row; buildRow, replaced in tests.
+	rowBuilder func(ctx context.Context, cfg *store.UserConfig, catalogID, mediaType string) catalogEntry
 }
 
 func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
@@ -32,6 +38,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 		cache:      cache.New(cfg.RedisURL),
 		aiSem:      newUserSemaphore(2), // max 2 concurrent AI calls per user
 	}
+	s.rowBuilder = s.buildRow
 
 	if cfg.TraktClientID != "" {
 		s.traktClient = trakt.NewClient(cfg.TraktClientID)
@@ -52,6 +59,7 @@ func NewForTest(cfg *config.Config, st store.StoreInterface, tmdbClient *tmdb.Cl
 		cache:       c,
 		aiSem:       newUserSemaphore(2),
 	}
+	s.rowBuilder = s.buildRow
 
 	s.router = s.setupRouter()
 	return s
