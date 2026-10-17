@@ -29,12 +29,15 @@ func getCatalog(t *testing.T, srv *Server, path string) ([]string, time.Duration
 	req, _ := http.NewRequest("GET", path, nil)
 	srv.router.ServeHTTP(w, req)
 	took := time.Since(start)
+	// Errorf, not Fatalf: some tests call this from goroutines
 	if w.Code != 200 {
-		t.Fatalf("status %d", w.Code)
+		t.Errorf("status %d", w.Code)
+		return nil, took
 	}
 	var resp stremio.CatalogResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
+		t.Error(err)
+		return nil, took
 	}
 	var names []string
 	for _, m := range resp.Metas {
@@ -265,4 +268,36 @@ func TestCatalog_AUsersRowsBuildOneAtATime(t *testing.T) {
 	if p := peak.Load(); p != 1 {
 		t.Errorf("peak concurrent builds = %d, want 1", p)
 	}
+}
+
+func TestCatalog_NextRowSeesThePreviousRowsNewList(t *testing.T) {
+	// The build slot used to be released before the row was saved, so the
+	// next row read the previous row's old list and they shared 4 titles.
+	ms := newMockStore()
+	_ = ms.CreateUser(context.Background(), "u1")
+	srv := newTestServer(ms)
+	cfg := userCfg(t, ms)
+
+	seenByGems := make(chan []string, 1)
+	srv.rowBuilder = func(_ context.Context, c *store.UserConfig, catalogID, mediaType string) catalogEntry {
+		if catalogID == "flickmind-hidden-gems" {
+			seenByGems <- srv.otherRowKeys(c, catalogID, mediaType)
+			return rowEntry("Gem")
+		}
+		time.Sleep(30 * time.Millisecond)
+		return catalogEntry{Metas: []stremio.Meta{{ID: "tt1", Name: "Pick"}}, Keys: []string{"movie:42"}}
+	}
+	go getCatalog(t, srv, "/u1/catalog/movie/flickmind-ai-picks.json")
+	time.Sleep(10 * time.Millisecond) // AI Picks holds the slot first
+	getCatalog(t, srv, "/u1/catalog/movie/flickmind-hidden-gems.json")
+
+	keys := <-seenByGems
+	found := false
+	for _, k := range keys {
+		found = found || k == "movie:42"
+	}
+	if !found {
+		t.Errorf("Hidden Gems saw %v; want AI Picks' new list (movie:42)", keys)
+	}
+	_ = cfg
 }

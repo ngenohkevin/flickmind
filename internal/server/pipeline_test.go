@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ngenohkevin/flickmind/internal/ai"
+	"github.com/ngenohkevin/flickmind/internal/tmdb"
 )
 
 func TestRoundInput_CarriesRowType(t *testing.T) {
@@ -48,4 +49,21 @@ func joinNames(names []string) string {
 		out += n
 	}
 	return out
+}
+
+func TestRankRelated_MostRecommendedFirst(t *testing.T) {
+	a := tmdb.SearchResult{ID: 1, MediaType: "tv", Title: "A"}
+	b := tmdb.SearchResult{ID: 2, MediaType: "tv", Title: "B"}
+	c := tmdb.SearchResult{ID: 3, MediaType: "tv", Title: "C"}
+	d := tmdb.SearchResult{ID: 3, MediaType: "movie", Title: "D"} // same ID, other type
+
+	got := rankRelated([][]tmdb.SearchResult{{a, b, d}, {c, b}, {c}})
+	var titles []string
+	for _, r := range got {
+		titles = append(titles, r.Title)
+	}
+	// B and C come from two seeds each (B seen first); A and D from one.
+	if want := "B,C,A,D"; joinNames(titles) != want {
+		t.Errorf("order = %s, want %s", joinNames(titles), want)
+	}
 }

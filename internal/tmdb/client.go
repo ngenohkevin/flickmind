@@ -141,6 +141,33 @@ func (c *Client) GetExternalIDs(ctx context.Context, tmdbID int, mediaType strin
 	return resp.IMDBId, nil
 }
 
+// Recommendations returns TMDB's recommendations for a title (first page);
+// mediaType is "movie" or "tv". Errors give an empty list.
+func (c *Client) Recommendations(ctx context.Context, mediaType string, id int) []SearchResult {
+	params := url.Values{"language": {"en-US"}}
+	data, err := c.get(ctx, fmt.Sprintf("/%s/%d/recommendations", mediaType, id), params)
+	if err != nil {
+		return nil
+	}
+	var results []SearchResult
+	if mediaType == "tv" {
+		var resp tmdbSearchResponse[tmdbTVResult]
+		if json.Unmarshal(data, &resp) == nil {
+			for i := range resp.Results {
+				results = append(results, *tvToResult(&resp.Results[i]))
+			}
+		}
+		return results
+	}
+	var resp tmdbSearchResponse[tmdbMovieResult]
+	if json.Unmarshal(data, &resp) == nil {
+		for i := range resp.Results {
+			results = append(results, *movieToResult(&resp.Results[i]))
+		}
+	}
+	return results
+}
+
 func (c *Client) DiscoverTV(ctx context.Context, params url.Values) ([]tmdbTVResult, error) {
 	data, err := c.get(ctx, "/discover/tv", params)
 	if err != nil {

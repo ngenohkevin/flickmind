@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -396,14 +397,20 @@ func (s *Server) handleCatalog(c *gin.Context) {
 func (s *Server) rebuildRow(cfg *store.UserConfig, catalogID, mediaType string) <-chan singleflight.Result {
 	key := rowKey(cfg, catalogID, mediaType)
 	return s.rowFlights.DoChan(key, func() (any, error) {
+		// One row per user at a time, saved before the slot is given up so
+		// the next row sees this row's new list.
+		s.aiSem.acquire(cfg.UserID)
+		defer s.aiSem.release(cfg.UserID)
+
 		entry := s.safeBuild(cfg, catalogID, mediaType)
 		s.storeRow(cfg, key, catalogID, entry)
 		return entry, nil
 	})
 }
 
-// safeBuild runs the row builder with its own deadline, inside the per-user
-// AI limit. A panic must not take the server down: the build runs outside
+// safeBuild runs the row builder with its own deadline, which starts once
+// the row has its slot, so the last of seven rows doesn't spend its budget
+// waiting. A panic must not take the server down: the build runs outside
 // the request, where gin's recovery doesn't reach.
 func (s *Server) safeBuild(cfg *store.UserConfig, catalogID, mediaType string) (entry catalogEntry) {
 	defer func() {
@@ -412,11 +419,6 @@ func (s *Server) safeBuild(cfg *store.UserConfig, catalogID, mediaType string) (
 			entry = catalogEntry{}
 		}
 	}()
-	// The deadline starts once the row has the user's build slot (one row at
-	// a time), so the last of seven rows doesn't spend its budget waiting.
-	s.aiSem.acquire(cfg.UserID)
-	defer s.aiSem.release(cfg.UserID)
-
 	ctx, cancel := context.WithTimeout(context.Background(), buildTimeout)
 	defer cancel()
 	return s.rowBuilder(ctx, cfg, catalogID, mediaType)
@@ -574,6 +576,18 @@ func (s *Server) buildCatalog(ctx context.Context, cfg *store.UserConfig, req ca
 		kept = s.aiRounds(ctx, cfg, req, providers, filter, want)
 	}
 
+	if len(kept) > 0 && len(kept) < want {
+		extra := s.relatedFill(ctx, kept, filter)
+		if need := want - len(kept); len(extra) > need {
+			extra = extra[:need]
+		}
+		if len(extra) > 0 {
+			s.tmdbClient.AttachIMDBIds(ctx, extra)
+			log.Printf("[%s %s] filled %d from TMDB recommendations", req.tag, req.mediaType, len(extra))
+			kept = append(kept, extra...)
+		}
+	}
+
 	if len(kept) < want && req.discover {
 		extra := s.discoverFill(ctx, req, rules, filter)
 		if need := want - len(kept); len(extra) > need {
@@ -662,6 +676,45 @@ func demoteProvider(providers []ai.ProviderEntry, name string) []ai.ProviderEntr
 		}
 	}
 	return append(front, back...)
+}
+
+// relatedSeeds caps how many kept titles relatedFill asks TMDB about.
+const relatedSeeds = 8
+
+// relatedFill returns TMDB's recommendations for the titles the AI kept that
+// pass the row's filter, those recommended for the most seeds first. It runs
+// before discover: ranked by TMDB rating, discover's lists were topped by
+// shows with small fan bases (Power Book IV, AEW Dynamite in Hidden Gems).
+func (s *Server) relatedFill(ctx context.Context, seeds []tmdb.SearchResult, filter *resultFilter) []tmdb.SearchResult {
+	var lists [][]tmdb.SearchResult
+	for _, seed := range seeds[:min(len(seeds), relatedSeeds)] {
+		if ctx.Err() != nil {
+			break
+		}
+		lists = append(lists, s.tmdbClient.Recommendations(ctx, seed.MediaType, seed.ID))
+	}
+	accepted, _ := filter.apply(rankRelated(lists))
+	return accepted
+}
+
+// rankRelated merges recommendation lists: titles recommended for more
+// seeds first, then in the order first seen.
+func rankRelated(lists [][]tmdb.SearchResult) []tmdb.SearchResult {
+	count := map[string]int{}
+	var order []tmdb.SearchResult
+	for _, list := range lists {
+		for _, r := range list {
+			k := seenKey(r)
+			if count[k] == 0 {
+				order = append(order, r)
+			}
+			count[k]++
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		return count[seenKey(order[i])] > count[seenKey(order[j])]
+	})
+	return order
 }
 
 // discoverFill pulls popular TMDB titles that pass the same filter.
