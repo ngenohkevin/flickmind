@@ -20,9 +20,31 @@ const (
 	Documentary
 )
 
-// GemsMaxVotes is the TMDB vote count above which a title is too well known
+// GemsMaxVotes is the TMDB vote count above which a film is too well known
 // to be a hidden gem. It matches the threshold stated in the gems prompt.
 const GemsMaxVotes = 5000
+
+// GemsMaxVotesSeries is the same for TV. Shows collect far fewer TMDB votes
+// (Andor ~2.3k, Severance ~3k, The Shadow Line 84), so the film cap let
+// mainstream shows into Hidden Gems.
+const GemsMaxVotesSeries = 1000
+
+// GemsMaxVotesFor returns the hidden-gems vote cap for a row's media type.
+func GemsMaxVotesFor(mediaType string) int {
+	if mediaType == "series" {
+		return GemsMaxVotesSeries
+	}
+	return GemsMaxVotes
+}
+
+// QualityFloor drops poorly reviewed titles from every row, including when
+// the user set no minimum rating (an AI pick rated 4.4 got through). A title
+// with fewer than QualityFloorMinVotes votes has no reliable rating yet and
+// is let through.
+const (
+	QualityFloor         = 6.0
+	QualityFloorMinVotes = 20
+)
 
 // Hidden gems promise quality: below these, a title is just obscure.
 const (
@@ -44,6 +66,9 @@ type Rules struct {
 	YearFrom  int
 	YearTo    int
 	MinRating float64
+	// QualityFloor drops titles rated below it once they have
+	// QualityFloorMinVotes votes, whatever MinRating says.
+	QualityFloor float64
 	// MaxVotes drops titles with more TMDB votes than this. 0 means no cap.
 	MaxVotes int
 	// MinVotes drops titles with fewer TMDB votes (an unrated title can't be
@@ -64,12 +89,23 @@ var neutral = map[string]bool{"drama": true}
 // alwaysExcluded are TV formats nobody asks a recommendation engine for.
 var alwaysExcluded = []string{"kids", "news", "reality", "soap", "talk"}
 
-// For builds the rules for one catalog kind.
+// ForMedia builds the rules for one catalog row; mediaType is "movie",
+// "series", or "" for the mixed rows.
+func ForMedia(cfg *store.UserConfig, kind Kind, mediaType string) Rules {
+	r := For(cfg, kind)
+	if kind == Gems {
+		r.MaxVotes = GemsMaxVotesFor(mediaType)
+	}
+	return r
+}
+
+// For builds the rules for one catalog kind, with film thresholds.
 func For(cfg *store.UserConfig, kind Kind) Rules {
 	r := Rules{
-		YearFrom:  cfg.YearFrom,
-		YearTo:    cfg.YearTo,
-		MinRating: cfg.MinRating,
+		YearFrom:     cfg.YearFrom,
+		YearTo:       cfg.YearTo,
+		MinRating:    cfg.MinRating,
+		QualityFloor: QualityFloor,
 	}
 
 	selected := map[string]bool{}

@@ -184,3 +184,52 @@ func TestPromptHistory_RecentFirstDedupedAndCapped(t *testing.T) {
 		t.Errorf("promptHistory = %v", got)
 	}
 }
+
+func TestFilter_QualityFloorAppliesWithoutAMinimumRating(t *testing.T) {
+	cfg := liveCfg()
+	cfg.MinRating = 0
+	f := newResultFilter(prefs.For(cfg, prefs.Picks), allowedTypes(cfg, "movie"), nil)
+
+	panned := movie(1, "The Last Heist", 2022, "en", 4.4, 28, 53) // the pick that got through
+	panned.VoteCount = 70
+	fresh := movie(2, "Brand New", 2026, "en", 3.0, 28) // too few votes to judge yet
+	fresh.VoteCount = 5
+	good := movie(3, "Blue Ruin", 2014, "en", 6.8, 53, 80)
+
+	kept, summary := f.apply([]tmdb.SearchResult{panned, fresh, good})
+	if got := keptTitles(kept); got != "Brand New, Blue Ruin" {
+		t.Errorf("kept = %q (%s)", got, summary)
+	}
+}
+
+func TestFilter_GemsSeriesUseTheSeriesVoteCap(t *testing.T) {
+	cfg := liveCfg()
+	f := newResultFilter(prefs.ForMedia(cfg, prefs.Gems, "series"), allowedTypes(cfg, "series"), nil)
+
+	andor := show(1, "Andor", 2022, "en", 8.3, 10765, 10759, 18)
+	andor.VoteCount = 2276
+	gem := show(2, "The Shadow Line", 2011, "en", 7.6, 80, 18, 9648)
+	gem.VoteCount = 84
+
+	kept, summary := f.apply([]tmdb.SearchResult{andor, gem})
+	if got := keptTitles(kept); got != "The Shadow Line" {
+		t.Errorf("kept = %q (%s)", got, summary)
+	}
+}
+
+func TestFilter_HidesTitlesShownInOtherRows(t *testing.T) {
+	cfg := liveCfg()
+	f := newResultFilter(prefs.For(cfg, prefs.Picks), allowedTypes(cfg, "movie"), nil)
+	f.hide([]string{"movie:1"})
+
+	kept, summary := f.apply([]tmdb.SearchResult{
+		movie(1, "Blue Ruin", 2014, "en", 6.8, 53, 80),
+		movie(2, "Cold in July", 2014, "en", 6.5, 53, 80),
+	})
+	if got := keptTitles(kept); got != "Cold in July" {
+		t.Errorf("kept = %q (%s)", got, summary)
+	}
+	if !strings.Contains(summary, "in another row 1") {
+		t.Errorf("summary = %q, want the reason logged", summary)
+	}
+}

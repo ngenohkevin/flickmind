@@ -341,3 +341,24 @@ func TestBuildBecauseYouWatchedPrompt_YearRange(t *testing.T) {
 		t.Error("because you watched prompt should include year range")
 	}
 }
+
+func TestBuildHiddenGemsPrompt_VoteCapMatchesTheRow(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
+	if p := BuildHiddenGemsPrompt(cfg, nil, "series"); !strings.Contains(p, "fewer than 1,000 votes") {
+		t.Error("series gems prompt should state the series vote cap")
+	}
+	if p := BuildHiddenGemsPrompt(cfg, nil, "movie"); !strings.Contains(p, "fewer than 5,000 votes") {
+		t.Error("movie gems prompt should state the film vote cap")
+	}
+}
+
+func TestBuildPrompt_StatesTheQualityFloor(t *testing.T) {
+	cfg := cfgWithDefaults(&store.UserConfig{Language: "en"})
+	if p := BuildAIPicksPrompt(cfg, nil, "movie"); !strings.Contains(p, "under 6.0") {
+		t.Error("prompt should ask to skip poorly reviewed titles when no minimum is set")
+	}
+	cfg.MinRating = 7
+	if p := BuildAIPicksPrompt(cfg, nil, "movie"); strings.Contains(p, "under 6.0") {
+		t.Error("a higher user minimum already covers the floor")
+	}
+}

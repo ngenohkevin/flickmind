@@ -22,6 +22,7 @@ type resultFilter struct {
 	langs    map[string]bool
 	blocked  map[string][]int // normalized title -> years (watched, watchlist)
 	blockIDs map[string]bool  // "movie:123" / "tv:123" TMDB keys of the same
+	shown    map[string]bool  // keys the user's other rows already show
 	seen     map[string]bool  // "movie:123" keys already kept
 }
 
@@ -34,6 +35,7 @@ func newResultFilter(rules prefs.Rules, types map[string]bool, blocked []trakt.W
 		langs:    toSet(rules.Languages),
 		blocked:  map[string][]int{},
 		blockIDs: map[string]bool{},
+		shown:    map[string]bool{},
 		seen:     map[string]bool{},
 	}
 	for _, item := range blocked {
@@ -75,6 +77,14 @@ func allowedTypes(cfg *store.UserConfig, mediaType string) map[string]bool {
 	return types
 }
 
+// hide drops titles the user's other rows already show (seenKey values), so
+// the rows stop repeating each other.
+func (f *resultFilter) hide(keys []string) {
+	for _, k := range keys {
+		f.shown[k] = true
+	}
+}
+
 // apply returns the results that pass, in order, and a summary of why the
 // rest were dropped.
 func (f *resultFilter) apply(results []tmdb.SearchResult) ([]tmdb.SearchResult, string) {
@@ -102,6 +112,9 @@ func (f *resultFilter) reject(r tmdb.SearchResult) string {
 	if f.isBlocked(r) {
 		return "watched"
 	}
+	if f.shown[seenKey(r)] {
+		return "in another row"
+	}
 
 	if f.rules.YearFrom > 0 || f.rules.YearTo > 0 {
 		if r.Year == 0 || (f.rules.YearFrom > 0 && r.Year < f.rules.YearFrom) || (f.rules.YearTo > 0 && r.Year > f.rules.YearTo) {
@@ -109,6 +122,9 @@ func (f *resultFilter) reject(r tmdb.SearchResult) string {
 		}
 	}
 	if f.rules.MinRating > 0 && r.VoteAverage < f.rules.MinRating {
+		return "rating"
+	}
+	if r.VoteCount >= prefs.QualityFloorMinVotes && r.VoteAverage < f.rules.QualityFloor {
 		return "rating"
 	}
 	if f.rules.MaxVotes > 0 && r.VoteCount > f.rules.MaxVotes {

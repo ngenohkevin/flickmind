@@ -100,8 +100,8 @@ func GetRecommendations(ctx context.Context, providers []ProviderEntry, prompt s
 	return nil, errors.New("no AI providers configured")
 }
 
-// deepSeekMaxTitles caps DeepSeek's request size; it is slower than Groq and
-// only runs as a fallback. Shortfalls are topped up by a second round.
+// deepSeekMaxTitles caps DeepSeek's request size; it is slower than Groq, so
+// a long list would take too long. Shortfalls are topped up by a second round.
 const deepSeekMaxTitles = 40
 
 var titleCountRe = regexp.MustCompile(`(?i)(recommend(?:\s+exactly)?\s+)(\d+)(\s+(?:NEW\s+)?titles)`)

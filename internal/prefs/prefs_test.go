@@ -113,3 +113,30 @@ func TestLanguages(t *testing.T) {
 		t.Error("zh should also accept cn")
 	}
 }
+
+func TestForMedia_GemsCapIsLowerForSeries(t *testing.T) {
+	// Shows collect far fewer TMDB votes than films: Andor has ~2.3k,
+	// a real gem like The Shadow Line under 100.
+	if r := ForMedia(kevinCfg(), Gems, "series"); r.MaxVotes != GemsMaxVotesSeries {
+		t.Errorf("series MaxVotes = %d, want %d", r.MaxVotes, GemsMaxVotesSeries)
+	}
+	if r := ForMedia(kevinCfg(), Gems, "movie"); r.MaxVotes != GemsMaxVotes {
+		t.Errorf("movie MaxVotes = %d, want %d", r.MaxVotes, GemsMaxVotes)
+	}
+	if r := ForMedia(kevinCfg(), Picks, "series"); r.MaxVotes != 0 {
+		t.Errorf("picks must not cap votes, got %d", r.MaxVotes)
+	}
+	if GemsMaxVotesSeries >= GemsMaxVotes {
+		t.Error("the series cap should be the lower one")
+	}
+}
+
+func TestFor_EveryRowHasAQualityFloor(t *testing.T) {
+	cfg := kevinCfg()
+	cfg.MinRating = 0 // "any rating" on the config page
+	for _, kind := range []Kind{Picks, Gems, Anime, Documentary} {
+		if r := For(cfg, kind); r.QualityFloor != QualityFloor {
+			t.Errorf("kind %d: QualityFloor = %v, want %v", kind, r.QualityFloor, QualityFloor)
+		}
+	}
+}

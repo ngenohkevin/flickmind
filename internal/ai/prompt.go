@@ -71,7 +71,7 @@ func BuildPrompt(kind PromptKind, cfg *store.UserConfig, in PromptInput) string 
 	if count <= 0 {
 		count = OverRequest(cfg.MaxResults)
 	}
-	rules := prefs.For(cfg, RulesKind(kind))
+	rules := prefs.ForMedia(cfg, RulesKind(kind), in.MediaType)
 
 	var parts []string
 	switch kind {
@@ -84,7 +84,7 @@ func BuildPrompt(kind PromptKind, cfg *store.UserConfig, in PromptInput) string 
 	switch kind {
 	case KindGems:
 		parts = append(parts, "\nSPECIAL FOCUS: Hidden Gems — underrated, lesser-known quality titles.")
-		parts = append(parts, fmt.Sprintf("Aim for critically acclaimed titles with fewer than %s votes on TMDB — not mainstream.", formatThousands(prefs.GemsMaxVotes)))
+		parts = append(parts, fmt.Sprintf("Aim for critically acclaimed titles with fewer than %s votes on TMDB — not mainstream.", formatThousands(rules.MaxVotes)))
 		parts = append(parts, "Avoid: blockbusters, franchise films, widely-known titles.")
 	case KindWatchlist:
 		parts = append(parts, fmt.Sprintf("\nUSER'S WATCHLIST (titles they saved to watch later): %s", strings.Join(in.Watchlist, ", ")))
@@ -181,6 +181,9 @@ func hardRules(cfg *store.UserConfig, rules prefs.Rules, kind PromptKind, mediaT
 	}
 	if rules.MinRating > 0 {
 		lines = append(lines, fmt.Sprintf("MINIMUM RATING: %.1f/10", rules.MinRating))
+	}
+	if rules.MinRating < rules.QualityFloor {
+		lines = append(lines, fmt.Sprintf("QUALITY: skip poorly reviewed titles (TMDB rating under %.1f)", rules.QualityFloor))
 	}
 	lines = appendYearRange(lines, rules.YearFrom, rules.YearTo)
 
