@@ -227,3 +227,42 @@ func TestCatalog_RowsSkipEachOthersTitles(t *testing.T) {
 		t.Errorf("other rows' keys = %v; want the other rows' titles, not this row's own", got)
 	}
 }
+
+func TestCatalog_AUsersRowsBuildOneAtATime(t *testing.T) {
+	// Rows built side by side can't see each other's new titles, so two
+	// rows refreshed together repeated 15 titles.
+	ms := newMockStore()
+	_ = ms.CreateUser(context.Background(), "u1")
+	srv := newTestServer(ms)
+
+	var running, peak atomic.Int32
+	srv.rowBuilder = func(_ context.Context, _ *store.UserConfig, _, _ string) catalogEntry {
+		n := running.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+		running.Add(-1)
+		return rowEntry("Pick")
+	}
+	done := make(chan struct{})
+	for _, path := range []string{
+		"/u1/catalog/movie/flickmind-ai-picks.json",
+		"/u1/catalog/movie/flickmind-hidden-gems.json",
+		"/u1/catalog/series/flickmind-ai-picks.json",
+	} {
+		go func() {
+			getCatalog(t, srv, path)
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < 3; i++ {
+		<-done
+	}
+	if p := peak.Load(); p != 1 {
+		t.Errorf("peak concurrent builds = %d, want 1", p)
+	}
+}

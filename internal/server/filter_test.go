@@ -200,6 +200,9 @@ func TestFilter_QualityFloorAppliesWithoutAMinimumRating(t *testing.T) {
 	if got := keptTitles(kept); got != "Brand New, Blue Ruin" {
 		t.Errorf("kept = %q (%s)", got, summary)
 	}
+	if len(f.belowBar) != 1 || f.belowBar[0] != "The Last Heist (2022) 4.4" {
+		t.Errorf("belowBar = %v, want the dropped title with its rating", f.belowBar)
+	}
 }
 
 func TestFilter_GemsSeriesUseTheSeriesVoteCap(t *testing.T) {

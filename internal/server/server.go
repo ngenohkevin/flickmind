@@ -36,7 +36,9 @@ func New(cfg *config.Config, pool *pgxpool.Pool) *Server {
 		store:      store.New(pool),
 		tmdbClient: tmdb.NewClient(cfg.TMDBAPIKey),
 		cache:      cache.New(cfg.RedisURL),
-		aiSem:      newUserSemaphore(2), // max 2 concurrent AI calls per user
+		// One row build per user at a time: a row built alongside another
+		// can't see that row's new titles, so the two repeated each other.
+		aiSem: newUserSemaphore(1),
 	}
 	s.rowBuilder = s.buildRow
 
@@ -57,7 +59,7 @@ func NewForTest(cfg *config.Config, st store.StoreInterface, tmdbClient *tmdb.Cl
 		tmdbClient:  tmdbClient,
 		traktClient: traktClient,
 		cache:       c,
-		aiSem:       newUserSemaphore(2),
+		aiSem:       newUserSemaphore(1),
 	}
 	s.rowBuilder = s.buildRow
 

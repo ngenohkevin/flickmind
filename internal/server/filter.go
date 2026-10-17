@@ -24,6 +24,9 @@ type resultFilter struct {
 	blockIDs map[string]bool  // "movie:123" / "tv:123" TMDB keys of the same
 	shown    map[string]bool  // keys the user's other rows already show
 	seen     map[string]bool  // "movie:123" keys already kept
+	// belowBar lists what the last apply dropped for its rating, as
+	// "Title (2014) 6.3", to tune the rating rules from the logs.
+	belowBar []string
 }
 
 func newResultFilter(rules prefs.Rules, types map[string]bool, blocked []trakt.WatchedItem) *resultFilter {
@@ -90,9 +93,13 @@ func (f *resultFilter) hide(keys []string) {
 func (f *resultFilter) apply(results []tmdb.SearchResult) ([]tmdb.SearchResult, string) {
 	var kept []tmdb.SearchResult
 	dropped := map[string]int{}
+	f.belowBar = nil
 	for _, r := range results {
 		if reason := f.reject(r); reason != "" {
 			dropped[reason]++
+			if reason == "rating" {
+				f.belowBar = append(f.belowBar, fmt.Sprintf("%s (%d) %.1f", r.Title, r.Year, r.VoteAverage))
+			}
 			continue
 		}
 		f.seen[seenKey(r)] = true

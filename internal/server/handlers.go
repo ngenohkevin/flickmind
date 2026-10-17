@@ -412,7 +412,7 @@ func (s *Server) safeBuild(cfg *store.UserConfig, catalogID, mediaType string) (
 			entry = catalogEntry{}
 		}
 	}()
-	// The deadline starts once the row has an AI slot (two rows per user at
+	// The deadline starts once the row has the user's build slot (one row at
 	// a time), so the last of seven rows doesn't spend its budget waiting.
 	s.aiSem.acquire(cfg.UserID)
 	defer s.aiSem.release(cfg.UserID)
@@ -627,6 +627,9 @@ func (s *Server) aiRounds(ctx context.Context, cfg *store.UserConfig, req catalo
 		kept = append(kept, accepted...)
 		log.Printf("[%s %s] round %d via %s: %d suggested, %d found on TMDB, %d kept (%s)",
 			req.tag, req.mediaType, round, result.ProviderName, len(result.Recommendations), len(enriched), len(accepted), summary)
+		if len(filter.belowBar) > 0 {
+			log.Printf("[%s %s] round %d under the rating bar: %s", req.tag, req.mediaType, round, strings.Join(filter.belowBar, ", "))
+		}
 
 		// Most suggestions missing from TMDB means the model is inventing
 		// titles; let the next provider take the top-up round.
@@ -679,7 +682,9 @@ func (s *Server) discoverFill(ctx context.Context, req catalogRequest, rules pre
 		// votes than films, so they get lower bounds: the film bounds filled
 		// the row with Andor, Outer Banks and 9-1-1.
 		o.MinRating = max(o.MinRating, 7.0)
-		o.MinVotes, o.MaxVotes = 300, 3000
+		// Films over 2,000 votes were titles most people have heard of
+		// (Togo, The Woman King, Just Mercy at 2.4-2.6k).
+		o.MinVotes, o.MaxVotes = 300, 2000
 		if req.mediaType == "series" {
 			o.MinVotes, o.MaxVotes = 80, prefs.GemsMaxVotesSeries
 		}
