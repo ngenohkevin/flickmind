@@ -6,7 +6,17 @@ type WatchedItem struct {
 	MediaType string `json:"media_type"` // "movie" or "show"
 	TMDBID    int    `json:"tmdb_id,omitempty"`
 
-	lastWatched string // RFC 3339; used only to order GetWatched results
+	// LastWatchedAt (RFC 3339) and Plays come from /sync/watched; exported so
+	// the cached list keeps them — Watch Again needs both.
+	LastWatchedAt string `json:"last_watched_at,omitempty"`
+	Plays         int    `json:"plays,omitempty"`
+}
+
+// Rating is one of the user's Trakt ratings (1–10).
+type Rating struct {
+	MediaType string // "movie" or "show"
+	TMDBID    int
+	Rating    int
 }
 
 type TokenResponse struct {
@@ -49,6 +59,14 @@ type traktShow struct {
 // traktWatchedItem is one entry of /sync/watched/{movies,shows}.
 type traktWatchedItem struct {
 	LastWatchedAt string      `json:"last_watched_at"`
+	Plays         int         `json:"plays"`
 	Movie         *traktMovie `json:"movie,omitempty"`
 	Show          *traktShow  `json:"show,omitempty"`
+}
+
+// traktRatingItem is one entry of /sync/ratings/{movies,shows}.
+type traktRatingItem struct {
+	Rating int         `json:"rating"`
+	Movie  *traktMovie `json:"movie,omitempty"`
+	Show   *traktShow  `json:"show,omitempty"`
 }

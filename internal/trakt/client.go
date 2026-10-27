@@ -183,7 +183,53 @@ func (c *Client) GetWatched(ctx context.Context, accessToken string) ([]WatchedI
 			}
 		}
 	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].lastWatched > all[j].lastWatched })
+	sort.SliceStable(all, func(i, j int) bool { return all[i].LastWatchedAt > all[j].LastWatchedAt })
+	return all, nil
+}
+
+// GetRatings returns the user's Trakt ratings for movies and shows. Watch
+// Again leaves out anything rated 5 or lower.
+func (c *Client) GetRatings(ctx context.Context, accessToken string) ([]Rating, error) {
+	var all []Rating
+	for _, kind := range []string{"movies", "shows"} {
+		req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/sync/ratings/"+kind, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("trakt-api-version", "2")
+		req.Header.Set("trakt-api-key", c.clientID)
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var raw []traktRatingItem
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized:
+			resp.Body.Close()
+			return nil, ErrUnauthorized
+		case resp.StatusCode != 200:
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("trakt API error %d: %s", resp.StatusCode, string(body))
+		default:
+			err = json.NewDecoder(resp.Body).Decode(&raw)
+			resp.Body.Close()
+			if err != nil {
+				return nil, err
+			}
+		}
+		for _, r := range raw {
+			switch {
+			case r.Movie != nil:
+				all = append(all, Rating{MediaType: "movie", TMDBID: r.Movie.IDs.TMDB, Rating: r.Rating})
+			case r.Show != nil:
+				all = append(all, Rating{MediaType: "show", TMDBID: r.Show.IDs.TMDB, Rating: r.Rating})
+			}
+		}
+	}
 	return all, nil
 }
 
@@ -221,9 +267,9 @@ func (c *Client) getWatchedPage(ctx context.Context, accessToken, path string) (
 	for _, w := range raw {
 		switch {
 		case w.Movie != nil:
-			items = append(items, WatchedItem{Title: w.Movie.Title, Year: w.Movie.Year, MediaType: "movie", TMDBID: w.Movie.IDs.TMDB, lastWatched: w.LastWatchedAt})
+			items = append(items, WatchedItem{Title: w.Movie.Title, Year: w.Movie.Year, MediaType: "movie", TMDBID: w.Movie.IDs.TMDB, LastWatchedAt: w.LastWatchedAt, Plays: w.Plays})
 		case w.Show != nil:
-			items = append(items, WatchedItem{Title: w.Show.Title, Year: w.Show.Year, MediaType: "show", TMDBID: w.Show.IDs.TMDB, lastWatched: w.LastWatchedAt})
+			items = append(items, WatchedItem{Title: w.Show.Title, Year: w.Show.Year, MediaType: "show", TMDBID: w.Show.IDs.TMDB, LastWatchedAt: w.LastWatchedAt, Plays: w.Plays})
 		}
 	}
 	return items, pageCount, nil
