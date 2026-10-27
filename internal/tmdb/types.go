@@ -51,3 +51,11 @@ type tmdbTVResult struct {
 type tmdbSearchResponse[T any] struct {
 	Results []T `json:"results"`
 }
+
+// Details is one title looked up by ID: the search fields plus its genre
+// names and, for shows, how many episodes have aired.
+type Details struct {
+	SearchResult
+	GenreNames       []string
+	NumberOfEpisodes int
+}
