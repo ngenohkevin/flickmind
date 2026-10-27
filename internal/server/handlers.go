@@ -315,6 +315,7 @@ var knownCatalogs = map[string]bool{
 	"flickmind-because-you-watched": true,
 	"flickmind-anime":               true,
 	"flickmind-documentary":         true,
+	"flickmind-watch-again":         true,
 }
 
 // catalogEntry is a built row as cached: the metas served to the app and the
@@ -430,6 +431,9 @@ func (s *Server) storeRow(cfg *store.UserConfig, key, catalogID string, entry ca
 		if catalogID == "flickmind-hidden-gems" && ttl < 6*time.Hour {
 			ttl = 6 * time.Hour
 		}
+		if catalogID == "flickmind-watch-again" {
+			ttl = 24 * time.Hour // its order changes once a day
+		}
 		s.cache.Set(key, entry, ttl)
 		s.cache.Set(lastKey(key), entry, lastTTL)
 		return
@@ -454,6 +458,8 @@ func (s *Server) buildRow(ctx context.Context, cfg *store.UserConfig, catalogID,
 		return s.getFocusedPicks(ctx, cfg, ai.KindAnime, hidden)
 	case "flickmind-documentary":
 		return s.getFocusedPicks(ctx, cfg, ai.KindDocumentary, hidden)
+	case "flickmind-watch-again":
+		return s.getWatchAgain(ctx, cfg, mediaType) // watched titles: no overlap with the other rows
 	}
 	return catalogEntry{}
 }

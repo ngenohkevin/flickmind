@@ -3,7 +3,7 @@ package stremio
 import "github.com/ngenohkevin/flickmind/internal/store"
 
 // Version is the addon version Stremio/Nuvio show. Bump it with each release.
-const Version = "2.2.0"
+const Version = "2.3.0"
 
 func BuildManifest(baseURL, frontendURL, userID string, cfg *store.UserConfig) Manifest {
 	// Determine which Stremio types to show based on user's content type preferences.
@@ -72,6 +72,9 @@ func BuildManifest(baseURL, frontendURL, userID string, cfg *store.UserConfig) M
 	if cfg != nil && cfg.TraktConnected {
 		for _, t := range types {
 			catalogs = append(catalogs, CatalogDef{Type: t, ID: "flickmind-because-you-watched", Name: "FlickMind: Because You Watched"})
+		}
+		for _, t := range types {
+			catalogs = append(catalogs, CatalogDef{Type: t, ID: "flickmind-watch-again", Name: "FlickMind: Watch Again"})
 		}
 	}
 

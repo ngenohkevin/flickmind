@@ -99,6 +99,12 @@ func (s *Server) disconnectTrakt(ctx context.Context, cfg *store.UserConfig) {
 // rejects the token before its recorded expiry (e.g. revoked and re-issued).
 func (s *Server) fetchTrakt(ctx context.Context, cfg *store.UserConfig, what string,
 	call func(token string) ([]trakt.WatchedItem, error)) []trakt.WatchedItem {
+	return traktCall(s, ctx, cfg, what, call)
+}
+
+// traktCall runs one Trakt request with the user's token, refreshing the
+// token once on a 401. Errors are logged and give nil.
+func traktCall[T any](s *Server, ctx context.Context, cfg *store.UserConfig, what string, call func(token string) ([]T, error)) []T {
 	token, ok := s.traktToken(ctx, cfg, false)
 	if !ok {
 		return nil
@@ -129,6 +135,30 @@ func (s *Server) fetchWatchlist(ctx context.Context, cfg *store.UserConfig) []tr
 	})
 }
 
+// fetchRatings returns the user's Trakt ratings keyed "movie:<tmdb>" /
+// "show:<tmdb>" (cached like the watched list).
+func (s *Server) fetchRatings(ctx context.Context, cfg *store.UserConfig) map[string]int {
+	if s.traktClient == nil || cfg.TraktAccessToken == "" {
+		return nil
+	}
+	key := cfg.UserID + ":trakt-ratings"
+	var cached map[string]int
+	if s.cache.Get(key, &cached) {
+		return cached
+	}
+	items := traktCall(s, ctx, cfg, "ratings", func(token string) ([]trakt.Rating, error) {
+		return s.traktClient.GetRatings(ctx, token)
+	})
+	out := make(map[string]int, len(items))
+	for _, r := range items {
+		out[fmt.Sprintf("%s:%d", r.MediaType, r.TMDBID)] = r.Rating
+	}
+	if len(out) > 0 {
+		s.cache.Set(key, out, watchedTTL)
+	}
+	return out
+}
+
 // watchedTTL is how long a user's full watched list is cached; one Stremio
 // load requests every catalog at once and each needs it.
 const watchedTTL = time.Hour
@@ -140,7 +170,7 @@ func (s *Server) fetchWatched(ctx context.Context, cfg *store.UserConfig) []trak
 	if s.traktClient == nil || cfg.TraktAccessToken == "" {
 		return nil
 	}
-	key := cfg.UserID + ":trakt-watched"
+	key := cfg.UserID + ":trakt-watched-v2" // v2: items carry LastWatchedAt and Plays (Watch Again)
 	var cached []trakt.WatchedItem
 	if s.cache.Get(key, &cached) {
 		return cached

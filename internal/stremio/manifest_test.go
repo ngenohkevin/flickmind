@@ -13,8 +13,8 @@ func TestBuildManifest_BaseCatalogs(t *testing.T) {
 	if m.ID != "community.flickmind" {
 		t.Errorf("expected id community.flickmind, got %s", m.ID)
 	}
-	if m.Version != "2.2.0" {
-		t.Errorf("expected version 2.2.0, got %s", m.Version)
+	if m.Version != "2.3.0" {
+		t.Errorf("expected version 2.3.0, got %s", m.Version)
 	}
 	if m.Name != "FlickMind" {
 		t.Errorf("expected name FlickMind, got %s", m.Name)
@@ -45,8 +45,8 @@ func TestBuildManifest_TraktConnected(t *testing.T) {
 	}
 	m := BuildManifest("http://localhost:7000", "http://localhost:3000", "abc123", cfg)
 
-	if len(m.Catalogs) != 6 {
-		t.Fatalf("expected 6 catalogs with Trakt, got %d", len(m.Catalogs))
+	if len(m.Catalogs) != 8 {
+		t.Fatalf("expected 8 catalogs with Trakt, got %d", len(m.Catalogs))
 	}
 
 	// Last two should be "because you watched"
@@ -208,5 +208,29 @@ func TestBuildManifest_ResourcesAndTypes(t *testing.T) {
 	}
 	if len(m.Types) != 2 || m.Types[0] != "movie" || m.Types[1] != "series" {
 		t.Errorf("expected types [movie, series], got %v", m.Types)
+	}
+}
+
+func TestManifestListsWatchAgainOnlyWithTrakt(t *testing.T) {
+	count := func(cfg *store.UserConfig) (n int, types string) {
+		for _, c := range BuildManifest("http://x", "http://y", "abc123", cfg).Catalogs {
+			if c.ID == "flickmind-watch-again" {
+				n++
+				types += c.Type + " "
+			}
+		}
+		return
+	}
+	if n, types := count(&store.UserConfig{UserID: "abc123", TraktConnected: true}); n != 2 || types != "movie series " {
+		t.Errorf("with Trakt: want movie and series, got %d (%s)", n, types)
+	}
+	if n, _ := count(&store.UserConfig{UserID: "abc123"}); n != 0 {
+		t.Errorf("without Trakt: want none, got %d", n)
+	}
+}
+
+func TestVersionIs230(t *testing.T) {
+	if Version != "2.3.0" {
+		t.Errorf("Version = %s, want 2.3.0", Version)
 	}
 }
