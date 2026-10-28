@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/ngenohkevin/flickmind/internal/ai"
@@ -367,8 +369,15 @@ func (s *Server) handleCatalog(c *gin.Context) {
 		return
 	}
 	cfg, err := s.store.GetUserConfig(c.Request.Context(), userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(200, catalogEntry{}.response()) // no such user: nothing to show
+		return
+	}
 	if err != nil {
-		c.JSON(200, catalogEntry{}.response())
+		// Not an empty row: Lucent takes an empty row as the answer, but keeps
+		// its last copy of the row through a failed one.
+		log.Printf("[Catalog] %s: reading config failed: %v", userID, err)
+		c.JSON(503, gin.H{"error": "temporarily unavailable"})
 		return
 	}
 	store.NormalizeConfig(cfg)

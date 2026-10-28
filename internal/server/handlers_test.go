@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/ngenohkevin/flickmind/internal/cache"
 	"github.com/ngenohkevin/flickmind/internal/config"
 	"github.com/ngenohkevin/flickmind/internal/store"
@@ -22,6 +23,7 @@ type mockStore struct {
 	users   map[string]bool
 	configs map[string]*store.UserConfig
 	caches  map[string]string
+	getErr  error // when set, GetUserConfig fails with it (the database is down)
 }
 
 func newMockStore() *mockStore {
@@ -47,9 +49,12 @@ func (m *mockStore) UserExists(_ context.Context, id string) (bool, error) {
 func (m *mockStore) GetUserConfig(_ context.Context, userID string) (*store.UserConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
 	cfg, ok := m.configs[userID]
 	if !ok {
-		return nil, fmt.Errorf("not found")
+		return nil, pgx.ErrNoRows // what the Postgres store returns for an unknown user
 	}
 	cp := *cfg
 	return &cp, nil
@@ -438,5 +443,28 @@ func TestUpdateConfig_NotFound(t *testing.T) {
 
 	if w.Code != 404 {
 		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+// An unknown user gets an empty row; a database that can't answer gets 503,
+// not an empty row: Lucent keeps its last copy of a row through a failed
+// answer, but takes an empty one as "nothing to pick" (review, 2026-10-28).
+func TestCatalog_StoreOutageIsNotAnEmptyRow(t *testing.T) {
+	ms := newMockStore()
+	srv := newTestServer(ms)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/nobody/catalog/movie/flickmind-ai-picks.json", nil)
+	srv.router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Errorf("unknown user: want 200 with no metas, got %d", w.Code)
+	}
+
+	ms.getErr = fmt.Errorf("connection refused")
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest("GET", "/nobody/catalog/movie/flickmind-ai-picks.json", nil)
+	srv.router.ServeHTTP(w, req)
+	if w.Code != 503 {
+		t.Errorf("database down: want 503, got %d", w.Code)
 	}
 }
