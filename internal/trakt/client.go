@@ -169,10 +169,8 @@ func (c *Client) GetWatched(ctx context.Context, accessToken string) ([]WatchedI
 	var all []WatchedItem
 	for _, kind := range []string{"movies", "shows"} {
 		for page := 1; page <= maxWatchedPages; page++ {
+			// Shows come with their seasons: Watch Again counts the episodes watched.
 			path := fmt.Sprintf("/sync/watched/%s?page=%d&limit=100", kind, page)
-			if kind == "shows" {
-				path += "&extended=noseasons" // skip per-episode detail
-			}
 			items, pageCount, err := c.getWatchedPage(ctx, accessToken, path)
 			if err != nil {
 				return nil, err
@@ -190,7 +188,7 @@ func (c *Client) GetWatched(ctx context.Context, accessToken string) ([]WatchedI
 // GetRatings returns the user's Trakt ratings for movies and shows. Watch
 // Again leaves out anything rated 5 or lower.
 func (c *Client) GetRatings(ctx context.Context, accessToken string) ([]Rating, error) {
-	var all []Rating
+	all := []Rating{} // none rated is an answer, not nil (nil means the read failed)
 	for _, kind := range []string{"movies", "shows"} {
 		req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/sync/ratings/"+kind, nil)
 		if err != nil {
@@ -269,7 +267,7 @@ func (c *Client) getWatchedPage(ctx context.Context, accessToken, path string) (
 		case w.Movie != nil:
 			items = append(items, WatchedItem{Title: w.Movie.Title, Year: w.Movie.Year, MediaType: "movie", TMDBID: w.Movie.IDs.TMDB, LastWatchedAt: w.LastWatchedAt, Plays: w.Plays})
 		case w.Show != nil:
-			items = append(items, WatchedItem{Title: w.Show.Title, Year: w.Show.Year, MediaType: "show", TMDBID: w.Show.IDs.TMDB, LastWatchedAt: w.LastWatchedAt, Plays: w.Plays})
+			items = append(items, WatchedItem{Title: w.Show.Title, Year: w.Show.Year, MediaType: "show", TMDBID: w.Show.IDs.TMDB, LastWatchedAt: w.LastWatchedAt, Plays: w.Plays, Episodes: w.episodes()})
 		}
 	}
 	return items, pageCount, nil

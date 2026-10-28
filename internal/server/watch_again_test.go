@@ -29,7 +29,8 @@ func waMovie(lib waLib, id int, title, lastWatched string, rating float64, votes
 	return trakt.WatchedItem{Title: title, MediaType: "movie", TMDBID: id, LastWatchedAt: lastWatched, Plays: 1}
 }
 
-func waShow(lib waLib, id int, title, lastWatched string, plays, episodes int, genres ...string) trakt.WatchedItem {
+// waShow is a show with watched of its episodes seen, each once.
+func waShow(lib waLib, id int, title, lastWatched string, watched, episodes int, genres ...string) trakt.WatchedItem {
 	if len(genres) == 0 {
 		genres = []string{"Drama"}
 	}
@@ -38,7 +39,7 @@ func waShow(lib waLib, id int, title, lastWatched string, plays, episodes int, g
 		GenreNames:       genres,
 		NumberOfEpisodes: episodes,
 	}
-	return trakt.WatchedItem{Title: title, MediaType: "show", TMDBID: id, LastWatchedAt: lastWatched, Plays: plays}
+	return trakt.WatchedItem{Title: title, MediaType: "show", TMDBID: id, LastWatchedAt: lastWatched, Plays: watched, Episodes: watched}
 }
 
 func waTitles(rs []tmdb.SearchResult) map[string]bool {
@@ -93,11 +94,21 @@ func TestWatchAgainShowsNeed80Percent(t *testing.T) {
 	w := []trakt.WatchedItem{
 		waShow(lib, 1, "Dropped", old, 39, 50),
 		waShow(lib, 2, "Finished", old, 40, 50),
-		waShow(lib, 3, "Rewatched", old, 70, 50),
+		waShow(lib, 3, "All of it", old, 50, 50),
 	}
 	got := waTitles(chooseWatchAgain(w, nil, lib.lookup, "series", waNow, 30))
-	if got["Dropped"] || !got["Finished"] || !got["Rewatched"] {
-		t.Errorf("want Finished and Rewatched, got %v", got)
+	if got["Dropped"] || !got["Finished"] || !got["All of it"] {
+		t.Errorf("want Finished and All of it, got %v", got)
+	}
+}
+
+// Rewatching the first half three times is 75 plays of 50 episodes, but only half the show (review, 2026-10-28).
+func TestWatchAgainCountsEachEpisodeOnce(t *testing.T) {
+	lib := waLib{}
+	half := waShow(lib, 1, "Half, three times", old, 25, 50)
+	half.Plays = 75
+	if got := chooseWatchAgain([]trakt.WatchedItem{half}, nil, lib.lookup, "series", waNow, 30); len(got) != 0 {
+		t.Errorf("a half-watched show was suggested: %v", waTitles(got))
 	}
 }
 

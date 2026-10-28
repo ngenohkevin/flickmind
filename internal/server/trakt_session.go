@@ -153,7 +153,7 @@ func (s *Server) fetchRatings(ctx context.Context, cfg *store.UserConfig) map[st
 	for _, r := range items {
 		out[fmt.Sprintf("%s:%d", r.MediaType, r.TMDBID)] = r.Rating
 	}
-	if len(out) > 0 {
+	if items != nil { // read fine, even with nothing rated: every row would ask again otherwise
 		s.cache.Set(key, out, watchedTTL)
 	}
 	return out
@@ -170,7 +170,7 @@ func (s *Server) fetchWatched(ctx context.Context, cfg *store.UserConfig) []trak
 	if s.traktClient == nil || cfg.TraktAccessToken == "" {
 		return nil
 	}
-	key := cfg.UserID + ":trakt-watched-v2" // v2: items carry LastWatchedAt and Plays (Watch Again)
+	key := cfg.UserID + ":trakt-watched-v3" // v2: items carry LastWatchedAt and Plays (Watch Again); v3: Episodes
 	var cached []trakt.WatchedItem
 	if s.cache.Get(key, &cached) {
 		return cached

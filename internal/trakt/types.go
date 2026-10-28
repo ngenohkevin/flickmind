@@ -10,6 +10,9 @@ type WatchedItem struct {
 	// the cached list keeps them — Watch Again needs both.
 	LastWatchedAt string `json:"last_watched_at,omitempty"`
 	Plays         int    `json:"plays,omitempty"`
+	// Episodes is how many of a show's episodes were watched, each counted
+	// once (specials left out); Plays counts rewatches too.
+	Episodes int `json:"episodes,omitempty"`
 }
 
 // Rating is one of the user's Trakt ratings (1–10).
@@ -58,10 +61,30 @@ type traktShow struct {
 
 // traktWatchedItem is one entry of /sync/watched/{movies,shows}.
 type traktWatchedItem struct {
-	LastWatchedAt string      `json:"last_watched_at"`
-	Plays         int         `json:"plays"`
-	Movie         *traktMovie `json:"movie,omitempty"`
-	Show          *traktShow  `json:"show,omitempty"`
+	LastWatchedAt string        `json:"last_watched_at"`
+	Plays         int           `json:"plays"`
+	Movie         *traktMovie   `json:"movie,omitempty"`
+	Show          *traktShow    `json:"show,omitempty"`
+	Seasons       []traktSeason `json:"seasons,omitempty"`
+}
+
+type traktSeason struct {
+	Number   int `json:"number"`
+	Episodes []struct {
+		Number int `json:"number"`
+	} `json:"episodes"`
+}
+
+// episodes counts the episodes watched, each once, leaving out specials
+// (season 0), which TMDB's episode count leaves out too.
+func (w traktWatchedItem) episodes() int {
+	n := 0
+	for _, s := range w.Seasons {
+		if s.Number > 0 {
+			n += len(s.Episodes)
+		}
+	}
+	return n
 }
 
 // traktRatingItem is one entry of /sync/ratings/{movies,shows}.

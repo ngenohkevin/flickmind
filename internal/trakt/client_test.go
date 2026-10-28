@@ -24,9 +24,6 @@ func TestGetWatched_FollowsPagesForMoviesAndShows(t *testing.T) {
 				fmt.Fprint(w, `[{"last_watched_at":"2026-09-01T00:00:00.000Z","movie":{"title":"Arrival","year":2016,"ids":{"tmdb":329865}}}]`)
 			}
 		case "/sync/watched/shows":
-			if r.URL.Query().Get("extended") != "noseasons" {
-				t.Error("shows should be fetched without per-episode detail")
-			}
 			w.Header().Set("X-Pagination-Page-Count", "1")
 			fmt.Fprint(w, `[{"last_watched_at":"2026-05-01T00:00:00.000Z","show":{"title":"The Boys","year":2019,"ids":{"tmdb":76479}}}]`)
 		default:
@@ -83,6 +80,34 @@ func TestGetWatchedKeepsLastWatchedAndPlays(t *testing.T) {
 	}
 	if items[1].Plays != 2 || items[1].LastWatchedAt != "2026-02-01T00:00:00.000Z" {
 		t.Errorf("movie lost plays/last watched: %+v", items[1])
+	}
+}
+
+// Watch Again's 80 % rule needs the episodes watched, each once; plays count rewatches too.
+func TestGetWatchedCountsEachEpisodeOnce(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Pagination-Page-Count", "1")
+		switch r.URL.Path {
+		case "/sync/watched/movies":
+			fmt.Fprint(w, `[]`)
+		case "/sync/watched/shows":
+			if r.URL.Query().Get("extended") == "noseasons" {
+				t.Error("shows need their seasons to count episodes")
+			}
+			fmt.Fprint(w, `[{"plays":7,"last_watched_at":"2026-03-01T00:00:00.000Z","show":{"title":"The Boys","year":2019,"ids":{"tmdb":76479}},
+				"seasons":[{"number":0,"episodes":[{"number":1,"plays":1}]},
+				{"number":1,"episodes":[{"number":1,"plays":3},{"number":2,"plays":1}]},
+				{"number":2,"episodes":[{"number":1,"plays":2}]}]}]`)
+		}
+	}))
+	defer ts.Close()
+
+	items, err := NewClient("cid").WithBaseURL(ts.URL).GetWatched(context.Background(), "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Episodes != 3 || items[0].Plays != 7 {
+		t.Fatalf("want 3 episodes (specials left out) and 7 plays, got %+v", items)
 	}
 }
 

@@ -80,7 +80,8 @@ func chooseWatchAgain(watched []trakt.WatchedItem, ratings map[string]int, detai
 		if d == nil || d.VoteAverage < watchAgainMinRating || d.VoteCount < watchAgainMinVotes || excludedGenre(d.GenreNames) {
 			continue
 		}
-		if tmdbType == "tv" && (d.NumberOfEpisodes == 0 || float64(w.Plays) < watchAgainShowShare*float64(d.NumberOfEpisodes)) {
+		// Episodes, not plays: rewatching half a show three times isn't having seen it.
+		if tmdbType == "tv" && (d.NumberOfEpisodes == 0 || float64(w.Episodes) < watchAgainShowShare*float64(d.NumberOfEpisodes)) {
 			continue
 		}
 		r := d.SearchResult

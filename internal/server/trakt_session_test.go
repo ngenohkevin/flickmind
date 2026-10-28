@@ -214,3 +214,48 @@ func TestTraktSignIn_DeclinedRedirectsWithError(t *testing.T) {
 		t.Errorf("declined sign-in should return to the config page with an error, got %d %s", w.Code, w.Header().Get("Location"))
 	}
 }
+
+// No ratings is an answer too: it's cached like any other, not asked for again by every row (review, 2026-10-28).
+func TestFetchRatings_CachesAnEmptyList(t *testing.T) {
+	var calls int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(ts.Close)
+	ms := newMockStore()
+	_ = ms.CreateUser(context.Background(), "u1")
+	later := time.Now().Add(time.Hour)
+	ms.configs["u1"].TraktAccessToken, ms.configs["u1"].TraktExpiresAt, ms.configs["u1"].TraktConnected = "tok", &later, true
+	srv := NewForTest(&config.Config{BaseURL: "http://localhost:7000"}, ms, nil, trakt.NewClient("id").WithBaseURL(ts.URL), cache.New(""))
+
+	cfg := ms.configs["u1"]
+	if got := srv.fetchRatings(context.Background(), cfg); len(got) != 0 {
+		t.Fatalf("want no ratings, got %v", got)
+	}
+	srv.fetchRatings(context.Background(), cfg)
+	if n := atomic.LoadInt32(&calls); n != 2 { // movies and shows, once
+		t.Errorf("Trakt asked %d times, want 2", n)
+	}
+}
+
+// A failed read isn't cached as "no ratings": the next row asks again.
+func TestFetchRatings_DoesNotCacheAFailure(t *testing.T) {
+	var calls int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(502)
+	}))
+	t.Cleanup(ts.Close)
+	ms := newMockStore()
+	_ = ms.CreateUser(context.Background(), "u1")
+	later := time.Now().Add(time.Hour)
+	ms.configs["u1"].TraktAccessToken, ms.configs["u1"].TraktExpiresAt, ms.configs["u1"].TraktConnected = "tok", &later, true
+	srv := NewForTest(&config.Config{BaseURL: "http://localhost:7000"}, ms, nil, trakt.NewClient("id").WithBaseURL(ts.URL), cache.New(""))
+
+	srv.fetchRatings(context.Background(), ms.configs["u1"])
+	srv.fetchRatings(context.Background(), ms.configs["u1"])
+	if n := atomic.LoadInt32(&calls); n != 2 { // the movies request fails each time
+		t.Errorf("Trakt asked %d times, want 2", n)
+	}
+}
