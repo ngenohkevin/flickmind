@@ -259,3 +259,25 @@ func TestFetchRatings_DoesNotCacheAFailure(t *testing.T) {
 		t.Errorf("Trakt asked %d times, want 2", n)
 	}
 }
+
+// Nothing watched is an answer too, cached like the ratings (review, 2026-10-28).
+func TestFetchWatched_CachesAnEmptyList(t *testing.T) {
+	var calls int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("X-Pagination-Page-Count", "1")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(ts.Close)
+	ms := newMockStore()
+	_ = ms.CreateUser(context.Background(), "u1")
+	later := time.Now().Add(time.Hour)
+	ms.configs["u1"].TraktAccessToken, ms.configs["u1"].TraktExpiresAt, ms.configs["u1"].TraktConnected = "tok", &later, true
+	srv := NewForTest(&config.Config{BaseURL: "http://localhost:7000"}, ms, nil, trakt.NewClient("id").WithBaseURL(ts.URL), cache.New(""))
+
+	srv.fetchWatched(context.Background(), ms.configs["u1"])
+	srv.fetchWatched(context.Background(), ms.configs["u1"])
+	if n := atomic.LoadInt32(&calls); n != 2 { // movies and shows, once
+		t.Errorf("Trakt asked %d times, want 2", n)
+	}
+}

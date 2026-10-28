@@ -166,7 +166,7 @@ const maxWatchedPages = 50
 // most recently watched first. History only covers recent plays (a binge of
 // one show fills it), so this is what exclusion has to use.
 func (c *Client) GetWatched(ctx context.Context, accessToken string) ([]WatchedItem, error) {
-	var all []WatchedItem
+	all := []WatchedItem{} // nothing watched is an answer, not nil (nil means the read failed)
 	for _, kind := range []string{"movies", "shows"} {
 		for page := 1; page <= maxWatchedPages; page++ {
 			// Shows come with their seasons: Watch Again counts the episodes watched.

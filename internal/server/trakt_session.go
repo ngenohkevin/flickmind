@@ -178,7 +178,7 @@ func (s *Server) fetchWatched(ctx context.Context, cfg *store.UserConfig) []trak
 	items := s.fetchTrakt(ctx, cfg, "watched list", func(token string) ([]trakt.WatchedItem, error) {
 		return s.traktClient.GetWatched(ctx, token)
 	})
-	if len(items) > 0 {
+	if items != nil { // read fine, even with nothing watched: every row would ask again otherwise
 		s.cache.Set(key, items, watchedTTL)
 	}
 	return items
